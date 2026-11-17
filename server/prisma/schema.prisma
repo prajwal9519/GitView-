@@ -1,0 +1,54 @@
+// GitView database schema - authentication phase.
+//
+// OAuthAccount and Repository from the blueprint are added in their own
+// phases; migrations are additive, so nothing here needs to change then
+// (User just gains two relation fields).
+
+generator client {
+  provider = "prisma-client"
+  // Prisma 7 generates the client INTO our source tree (not node_modules).
+  output = "../src/generated/prisma"
+  // Node loads the generated TypeScript files directly (type stripping), so
+  // their imports must say ".ts". Needs Node >= 22.18.
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+  // The connection URL lives in prisma.config.js (Prisma 7), not here.
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String?  @unique // nullable: GitHub users may hide their email
+  username     String   @unique
+  passwordHash String? // bcrypt hash; null for GitHub-only accounts
+  avatarUrl    String?
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+}
+
+// One row per refresh token we ever issued. This table is what makes refresh
+// tokens revocable, rotatable, and lets us detect a stolen token being replayed.
+model RefreshToken {
+  id        String    @id @default(uuid()) // also the JWT "jti" claim
+  userId    String
+  familyId  String // every token descended from one login shares this
+  tokenHash String // SHA-256 of the token string (never the token itself)
+  expiresAt DateTime
+  revokedAt DateTime? // set when rotated, logged out, or family revoked
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}

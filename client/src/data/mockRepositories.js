@@ -1,0 +1,183 @@
+export const mockRepositories = [
+  {
+    id: 'shadcn-ui-ui',
+    fullName: 'shadcn-ui/ui',
+    owner: 'shadcn-ui',
+    name: 'ui',
+    description: 'Beautifully designed components that you can copy and paste into your apps. Accessible. Customizable. Open Source.',
+    isPrivate: false,
+    stars: 64200,
+    forks: 5800,
+    primaryLanguage: 'TypeScript',
+    languageBreakdown: {
+      TypeScript: 88.2,
+      'Tailwind CSS': 8.4,
+      JavaScript: 2.6,
+      'JSON / Config': 0.8
+    },
+    defaultBranch: 'main',
+    branches: ['main', 'canary', 'v0.8.0', 'v0.7.0'],
+    latestCommit: '9a1f2b4',
+    framework: 'Next.js 14.1.0',
+    runtime: 'Node 20 • port 3000',
+    port: 3000,
+    status: 'running',
+    filesCount: 4281,
+    size: '38.4 MB',
+    astParseTime: '380ms',
+    tags: ['Next.js 14', 'TypeScript', 'Tailwind CSS'],
+    dependenciesCount: 18,
+    totalDependenciesCount: 142,
+    vulnerabilitiesCount: 0
+  },
+  {
+    id: 'facebook-react',
+    fullName: 'facebook/react',
+    owner: 'facebook',
+    name: 'react',
+    description: 'The library for web and native user interfaces. Core repository containing React runtime, reconciler, and compiler.',
+    isPrivate: false,
+    stars: 224000,
+    forks: 45200,
+    primaryLanguage: 'JavaScript',
+    languageBreakdown: {
+      JavaScript: 94.6,
+      TypeScript: 3.8,
+      C: 1.0,
+      Other: 0.6
+    },
+    defaultBranch: 'main',
+    branches: ['main', '18.3-release', 'canary'],
+    latestCommit: 'e284c1a',
+    framework: 'React 18.3.1',
+    runtime: 'Node 20 • port 3001',
+    port: 3001,
+    status: 'idle',
+    filesCount: 8940,
+    size: '64.1 MB',
+    astParseTime: '510ms',
+    tags: ['Monorepo', 'JavaScript 98%'],
+    dependenciesCount: 24,
+    totalDependenciesCount: 280,
+    vulnerabilitiesCount: 0
+  },
+  {
+    id: 'tailwindlabs-tailwindcss',
+    fullName: 'tailwindlabs/tailwindcss',
+    owner: 'tailwindlabs',
+    name: 'tailwindcss',
+    description: 'A utility-first CSS framework for rapid UI development. Next-generation Rust engine Oxide integration.',
+    isPrivate: false,
+    stars: 81000,
+    forks: 4100,
+    primaryLanguage: 'TypeScript',
+    languageBreakdown: {
+      TypeScript: 68.4,
+      Rust: 24.1,
+      JavaScript: 5.2,
+      CSS: 2.3
+    },
+    defaultBranch: 'main',
+    branches: ['main', 'next', 'v3-legacy'],
+    latestCommit: '3b7a129',
+    framework: 'Tailwind CSS v4.0 Alpha',
+    runtime: 'Rust Oxide • port 5173',
+    port: 5173,
+    status: 'ready',
+    filesCount: 2150,
+    size: '22.3 MB',
+    astParseTime: '240ms',
+    tags: ['v4.0 Alpha', 'Rust & TS'],
+    dependenciesCount: 12,
+    totalDependenciesCount: 96,
+    vulnerabilitiesCount: 0
+  },
+  {
+    id: 'vitejs-vite',
+    fullName: 'vitejs/vite',
+    owner: 'vitejs',
+    name: 'vite',
+    description: 'Next Generation Frontend Tooling. Instant Server Start, Lightning Fast HMR, Rich Features, Optimized Build.',
+    isPrivate: false,
+    stars: 68500,
+    forks: 5900,
+    primaryLanguage: 'TypeScript',
+    languageBreakdown: {
+      TypeScript: 92.5,
+      JavaScript: 6.0,
+      HTML: 1.5
+    },
+    defaultBranch: 'main',
+    branches: ['main', 'v5.2.0', 'canary'],
+    latestCommit: '8f3b901',
+    framework: 'Vite 5.2.0',
+    runtime: 'Node 20 • port 5173',
+    port: 5173,
+    status: 'ready',
+    filesCount: 3410,
+    size: '18.9 MB',
+    astParseTime: '290ms',
+    tags: ['Vite 5', 'ESM', 'TypeScript'],
+    dependenciesCount: 16,
+    totalDependenciesCount: 110,
+    vulnerabilitiesCount: 0
+  }
+];
+
+export const mockHistorySessions = [
+  {
+    id: 'sess-1',
+    repoFullName: 'shadcn-ui/ui',
+    branch: 'main (9a1f2b)',
+    runtime: 'Node 20 • port 3000',
+    lastActive: 'Just now',
+    status: 'running',
+    statusLabel: 'Live Preview',
+    actionText: 'Resume →',
+    actionLink: '/workspace/shadcn-ui-ui'
+  },
+  {
+    id: 'sess-2',
+    repoFullName: 'vercel/next.js',
+    branch: 'canary',
+    runtime: 'Turbopack dev',
+    lastActive: '2 hours ago',
+    status: 'terminated',
+    statusLabel: 'Terminated',
+    actionText: 'Restart',
+    actionLink: '/workspace/shadcn-ui-ui'
+  },
+  {
+    id: 'sess-3',
+    repoFullName: 'acme-corp/private-crm',
+    branch: 'feat/preview-auth',
+    runtime: 'Vite • port 5173',
+    lastActive: 'Yesterday',
+    status: 'failed',
+    statusLabel: 'Exit code 1',
+    actionText: 'Logs',
+    actionLink: '/repo/shadcn-ui-ui'
+  },
+  {
+    id: 'sess-4',
+    repoFullName: 'tailwindlabs/tailwindcss',
+    branch: 'main',
+    runtime: 'Rust / TS',
+    lastActive: '3 days ago',
+    status: 'ready',
+    statusLabel: 'Ready',
+    actionText: 'View Code',
+    actionLink: '/workspace/tailwindlabs-tailwindcss'
+  }
+];
+
+export const mockDependencies = [
+  { name: '@radix-ui/react-dialog', version: 'v1.0.5', license: 'MIT', type: 'production', audit: 'Pass (0 CVE)' },
+  { name: 'class-variance-authority', version: 'v0.7.0', license: 'Apache-2.0', type: 'production', audit: 'Pass (0 CVE)' },
+  { name: 'clsx', version: 'v2.1.0', license: 'MIT', type: 'production', audit: 'Pass (0 CVE)' },
+  { name: 'tailwind-merge', version: 'v2.2.1', license: 'MIT', type: 'production', audit: 'Pass (0 CVE)' },
+  { name: 'lucide-react', version: 'v0.330.0', license: 'ISC', type: 'production', audit: 'Pass (0 CVE)' },
+  { name: '@radix-ui/react-dropdown-menu', version: 'v2.0.6', license: 'MIT', type: 'production', audit: 'Pass (0 CVE)' },
+  { name: '@radix-ui/react-slot', version: 'v1.0.2', license: 'MIT', type: 'production', audit: 'Pass (0 CVE)' },
+  { name: '@radix-ui/react-tabs', version: 'v1.0.4', license: 'MIT', type: 'production', audit: 'Pass (0 CVE)' }
+];
