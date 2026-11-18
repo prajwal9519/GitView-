@@ -105,15 +105,19 @@ export const Sidebar = () => {
             className="flex items-center gap-2.5 flex-1 min-w-0 group"
             title="Settings"
           >
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center text-white font-mono text-xs font-bold shrink-0">
-              {userInitials}
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center text-white font-mono text-xs font-bold shrink-0 overflow-hidden">
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
+              ) : (
+                userInitials
+              )}
             </div>
             <div className="min-w-0">
               <div className="text-xs font-semibold text-white leading-none truncate group-hover:text-blue-400 transition-colors">
                 {user?.username || 'user'}
               </div>
               <div className="text-[11px] font-mono text-slate-400 truncate mt-0.5">
-                {user?.email || 'Authenticated'}
+                {user?.githubConnected ? 'GitHub Connected' : user?.email || 'Authenticated'}
               </div>
             </div>
           </Link>

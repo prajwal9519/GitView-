@@ -4,6 +4,14 @@ import { mockDependencies } from '../../data/mockRepositories';
 export const DependenciesViewer = () => {
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5 font-body">
+      {/* Notice Banner */}
+      <div className="p-3 rounded-lg bg-blue-950/40 border border-blue-500/30 flex items-center gap-2 text-xs font-mono text-blue-300">
+        <span className="material-symbols-outlined text-[16px] text-blue-400">info</span>
+        <span>
+          <strong>Preview / Mock:</strong> Live dependency tree parsing and vulnerability auditing will be connected in an upcoming phase. Showing baseline manifest preview.
+        </span>
+      </div>
+
       <div className="flex items-center justify-between border-b border-border-subtle pb-4">
         <div>
           <h2 className="font-headline text-headline-sm text-white font-semibold">

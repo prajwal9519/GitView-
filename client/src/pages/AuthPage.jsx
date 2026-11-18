@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { authService } from '../services/authService';
 import { InputField } from '../components/common/InputField';
 import { Button } from '../components/common/Button';
 
@@ -28,7 +29,24 @@ export const AuthPage = ({ initialMode }) => {
   const [error, setError] = useState('');
   const [errorDetails, setErrorDetails] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [oauthNotice, setOauthNotice] = useState('');
+
+  // Surface OAuth errors returned via redirect query params
+  useEffect(() => {
+    const errorParam = searchParams.get('error');
+    if (errorParam) {
+      const errorMap = {
+        github_denied: 'GitHub authorization was cancelled or denied.',
+        oauth_state_invalid: 'Security verification failed (OAuth state invalid or expired). Please try again.',
+        account_exists: 'An account with this email already exists. Please sign in with your email & password to link GitHub in Settings.',
+        github_conflict: 'This GitHub account is already connected to another user.',
+        github_error: 'Failed to communicate with GitHub. Please try again.',
+      };
+      setError(errorMap[errorParam] || `Authentication error: ${errorParam}`);
+      if (errorParam === 'account_exists') {
+        setMode('signin');
+      }
+    }
+  }, [searchParams]);
 
   const validate = () => {
     if (!email.trim() || !password) {
@@ -63,7 +81,6 @@ export const AuthPage = ({ initialMode }) => {
     e.preventDefault();
     setError('');
     setErrorDetails([]);
-    setOauthNotice('');
 
     if (!validate()) {
       return;
@@ -96,7 +113,8 @@ export const AuthPage = ({ initialMode }) => {
   };
 
   const handleGitHubOAuthClick = () => {
-    setOauthNotice('GitHub OAuth will be enabled in Phase 2. Please sign up or sign in using email and password below.');
+    // Navigate browser to GitHub OAuth initiation endpoint
+    window.location.href = authService.getGitHubAuthUrl();
   };
 
   return (
@@ -141,7 +159,6 @@ export const AuthPage = ({ initialMode }) => {
                 setMode('signin');
                 setError('');
                 setErrorDetails([]);
-                setOauthNotice('');
               }}
               className={`py-1.5 rounded transition-all ${
                 mode === 'signin'
@@ -157,7 +174,6 @@ export const AuthPage = ({ initialMode }) => {
                 setMode('signup');
                 setError('');
                 setErrorDetails([]);
-                setOauthNotice('');
               }}
               className={`py-1.5 rounded transition-all ${
                 mode === 'signup'
@@ -169,7 +185,7 @@ export const AuthPage = ({ initialMode }) => {
             </button>
           </div>
 
-          {/* GitHub OAuth Button (Informative notice in Phase 1) */}
+          {/* GitHub OAuth Button */}
           <button
             type="button"
             onClick={handleGitHubOAuthClick}
@@ -184,13 +200,6 @@ export const AuthPage = ({ initialMode }) => {
             </svg>
             <span>{mode === 'signup' ? 'Sign up with GitHub' : 'Continue with GitHub'}</span>
           </button>
-
-          {oauthNotice && (
-            <div className="mb-4 p-2.5 bg-blue-950/40 border border-blue-500/30 rounded-lg text-xs font-mono text-blue-300 flex items-start gap-2">
-              <span className="material-symbols-outlined text-[16px] shrink-0 mt-0.5">info</span>
-              <span>{oauthNotice}</span>
-            </div>
-          )}
 
           {/* Divider */}
           <div className="relative flex items-center justify-center my-4">

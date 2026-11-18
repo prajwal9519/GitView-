@@ -1,8 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 
-export const RepoCard = ({ repo }) => {
+export const RepoCard = ({ repo, onDelete }) => {
+  const [isDeleting, setIsDeleting] = useState(false);
   const isRunning = repo.status === 'running';
+  const tags = repo.tags || [repo.primaryLanguage, repo.defaultBranch].filter(Boolean);
+
+  const handleDelete = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (window.confirm(`Are you sure you want to remove "${repo.fullName}" from GitView?`)) {
+      setIsDeleting(true);
+      try {
+        await onDelete(repo.id);
+      } finally {
+        setIsDeleting(false);
+      }
+    }
+  };
 
   return (
     <article
@@ -12,35 +27,48 @@ export const RepoCard = ({ repo }) => {
           : 'border-border-subtle hover:border-border-strong'
       }`}
     >
-      {isRunning ? (
-        <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-mono bg-emerald-950/70 border border-emerald-500/40 text-emerald-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>Running: {repo.port || 3000}</span>
-        </div>
-      ) : (
-        <div className="absolute top-4 right-4">
+      <div className="absolute top-4 right-4 flex items-center gap-2">
+        {isRunning ? (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-mono bg-emerald-950/70 border border-emerald-500/40 text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Running: {repo.port || 3000}</span>
+          </div>
+        ) : (
           <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-400 border border-slate-700">
-            {repo.status === 'ready' ? 'Ready' : 'Idle'}
+            {repo.status === 'ready' ? 'Ready' : 'Imported'}
           </span>
-        </div>
-      )}
+        )}
+
+        {onDelete && (
+          <button
+            onClick={handleDelete}
+            disabled={isDeleting}
+            title="Remove repository"
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-950/60 text-slate-500 hover:text-red-400"
+          >
+            <span className="material-symbols-outlined text-[16px]">
+              {isDeleting ? 'hourglass_empty' : 'delete'}
+            </span>
+          </button>
+        )}
+      </div>
 
       <div>
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-2 pr-20">
           <span className="material-symbols-outlined text-blue-400 text-[20px]">
             {isRunning ? 'layers' : 'code'}
           </span>
-          <h3 className="font-headline font-semibold text-white text-base truncate">
+          <h3 className="font-headline font-semibold text-white text-base truncate" title={repo.fullName}>
             {repo.fullName}
           </h3>
         </div>
 
-        <p className="text-body-sm text-slate-300 line-clamp-2 mb-4">
-          {repo.description}
+        <p className="text-body-sm text-slate-300 line-clamp-2 mb-4 min-h-[36px]">
+          {repo.description || 'No description provided.'}
         </p>
 
         <div className="flex flex-wrap items-center gap-2 mb-4 text-xs font-mono">
-          {repo.tags?.map((tag) => (
+          {tags.map((tag) => (
             <span
               key={tag}
               className="px-2 py-0.5 rounded bg-[#090D16] text-slate-300 border border-border-subtle"
@@ -48,6 +76,11 @@ export const RepoCard = ({ repo }) => {
               {tag}
             </span>
           ))}
+          {repo.latestCommitSha && (
+            <span className="px-2 py-0.5 rounded bg-[#090D16] text-slate-400 border border-border-subtle text-[11px]">
+              sha: {repo.latestCommitSha.slice(0, 7)}
+            </span>
+          )}
         </div>
       </div>
 
