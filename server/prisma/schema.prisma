@@ -1,8 +1,4 @@
-// GitView database schema - authentication phase.
-//
-// OAuthAccount and Repository from the blueprint are added in their own
-// phases; migrations are additive, so nothing here needs to change then
-// (User just gains two relation fields).
+// GitView database schema - authentication & GitHub OAuth phase.
 
 generator client {
   provider = "prisma-client"
@@ -23,6 +19,10 @@ enum Role {
   ADMIN
 }
 
+enum Provider {
+  GITHUB
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String?  @unique // nullable: GitHub users may hide their email
@@ -34,6 +34,8 @@ model User {
   updatedAt    DateTime @updatedAt
 
   refreshTokens RefreshToken[]
+  oauthAccounts OAuthAccount[]
+  repositories  Repository[]
 }
 
 // One row per refresh token we ever issued. This table is what makes refresh
@@ -51,4 +53,48 @@ model RefreshToken {
 
   @@index([userId])
   @@index([familyId])
+}
+
+// Linked third-party OAuth identities (e.g. GitHub).
+// Stores AES-256-GCM encrypted access tokens so they never leak from database dumps.
+model OAuthAccount {
+  id                String   @id @default(uuid())
+  userId            String
+  provider          Provider
+  providerAccountId String   // GitHub numeric user ID stored as string
+  accessTokenEnc    String   // AES-256-GCM encrypted token
+  scope             String?
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+// Imported repositories scoped to users.
+// Tracks repository metadata, branches, and commit status.
+model Repository {
+  id              String   @id @default(uuid())
+  userId          String
+  githubRepoId    String   // GitHub numeric repo ID stored as string
+  owner           String   // e.g. "facebook"
+  name            String   // e.g. "react"
+  fullName        String   // e.g. "facebook/react"
+  description     String?
+  htmlUrl         String   // e.g. "https://github.com/facebook/react"
+  defaultBranch   String   @default("main")
+  latestCommitSha String?  // default branch's latest commit SHA
+  primaryLanguage String?  // e.g. "JavaScript", "TypeScript"
+  isPrivate       Boolean  @default(false)
+  importedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, githubRepoId])
+  @@index([userId])
+  @@index([fullName])
 }

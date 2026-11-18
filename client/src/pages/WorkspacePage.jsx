@@ -8,6 +8,7 @@ import { ReadmeViewer } from '../components/workspace/ReadmeViewer';
 import { DependenciesViewer } from '../components/workspace/DependenciesViewer';
 import { LivePreview } from '../components/workspace/LivePreview';
 import { CommandPaletteModal, Modal } from '../components/common/Modal';
+import { repoService } from '../services/repoService';
 import { mockRepositories } from '../data/mockRepositories';
 
 export const WorkspacePage = () => {
@@ -19,7 +20,8 @@ export const WorkspacePage = () => {
     mainViewMode,
     isPreviewOpen,
     selectFile,
-    triggerSandboxRefresh
+    triggerSandboxRefresh,
+    treeCache,
   } = useWorkspace();
 
   const [leftWidth, setLeftWidth] = useState(256);
@@ -29,18 +31,49 @@ export const WorkspacePage = () => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
-  // Sync repo if passed in URL params
+  // Sync real repository if passed in URL params or route
   useEffect(() => {
-    const repoParam = searchParams.get('repo');
-    if (repoParam) {
-      const match = mockRepositories.find(
-        (r) => r.fullName === repoParam || r.id === repoParam || repoParam.includes(r.owner)
-      );
-      if (match) setCurrentRepo(match);
-    } else if (repoId) {
-      const match = mockRepositories.find((r) => r.id === repoId || r.fullName === repoId);
-      if (match) setCurrentRepo(match);
+    const targetIdentifier = repoId || searchParams.get('repo') || searchParams.get('id');
+
+    async function resolveRepository() {
+      if (targetIdentifier) {
+        try {
+          const repo = await repoService.getRepositoryById(targetIdentifier);
+          if (repo) {
+            setCurrentRepo(repo);
+            return;
+          }
+        } catch {
+          // Continue to list match or mock fallback
+        }
+      }
+
+      // Try user's imported repositories
+      try {
+        const userRepos = await repoService.getRepositories();
+        if (Array.isArray(userRepos) && userRepos.length > 0) {
+          if (targetIdentifier) {
+            const match = userRepos.find(
+              (r) => r.id === targetIdentifier || r.fullName === targetIdentifier || targetIdentifier.includes(r.name)
+            );
+            if (match) {
+              setCurrentRepo(match);
+              return;
+            }
+          }
+          setCurrentRepo(userRepos[0]);
+          return;
+        }
+      } catch {
+        // Fallback to mock
+      }
+
+      // Fallback for preset preview repos
+      const match = mockRepositories.find((r) => r.id === targetIdentifier || r.fullName === targetIdentifier);
+      setCurrentRepo(match || mockRepositories[0]);
     }
+
+    resolveRepository();
   }, [repoId, searchParams, setCurrentRepo]);
 
   // Global Keyboard shortcuts (⌘K for command palette, ⌘P for search)
@@ -92,17 +125,14 @@ export const WorkspacePage = () => {
     };
   }, [isResizingLeft, isResizingRight, handleMouseMove, handleMouseUp]);
 
-  const allFilesList = [
-    'apps/www/registry/button.tsx',
-    'apps/www/registry/dialog.tsx',
-    'apps/www/registry/dropdown-menu.tsx',
-    'apps/www/registry/tabs.tsx',
-    'apps/www/lib/utils.ts',
+  const cachedFiles = Object.values(treeCache || {})
+    .flat()
+    .filter((e) => e && e.type === 'file')
+    .map((e) => e.path);
+  const allFilesList = cachedFiles.length > 0 ? cachedFiles : [
     'package.json',
-    'tailwind.config.ts',
     'README.md',
     'tsconfig.json',
-    'components.json'
   ];
 
   return (
@@ -166,8 +196,7 @@ export const WorkspacePage = () => {
         onClose={() => setIsCommandPaletteOpen(false)}
         files={allFilesList}
         onSelectFile={(path) => {
-          const fileName = path.split('/').pop();
-          selectFile(fileName);
+          selectFile(path);
         }}
         onSelectAction={(act) => {
           if (act === 'restart') {

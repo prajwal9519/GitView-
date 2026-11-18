@@ -11,8 +11,10 @@ export const agent = () => request.agent(app); // like a browser: remembers cook
 
 export const credentials = { email: 'alice@example.com', username: 'alice', password: 'correct horse battery' };
 
-// Deletes all rows (RefreshToken first: it points at User).
+// Deletes all rows (Repository, OAuthAccount and RefreshToken first: they point at User).
 export async function resetDb() {
+  await prisma.repository.deleteMany();
+  await prisma.oAuthAccount.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.user.deleteMany();
 }

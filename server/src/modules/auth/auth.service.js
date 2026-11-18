@@ -25,7 +25,7 @@ const tokenErrorCode = (err) => (err.name === 'TokenExpiredError' ? 'TOKEN_EXPIR
  * `familyId` identifies one login session: a fresh login starts a new family,
  * and every rotation keeps the same one (that is how reuse detection works).
  */
-async function issueTokens(user, familyId = crypto.randomUUID()) {
+export async function issueTokens(user, familyId = crypto.randomUUID()) {
   const tokenId = crypto.randomUUID();
   const accessToken = signAccessToken(user);
   const refreshToken = signRefreshToken({ userId: user.id, tokenId, familyId });

@@ -21,6 +21,17 @@ const schema = z
     BCRYPT_COST: z.coerce.number().int().min(4).max(15).default(12),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
     TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+
+    // GitHub OAuth App credentials (optional until configured)
+    GITHUB_CLIENT_ID: z.string().optional().default(''),
+    GITHUB_CLIENT_SECRET: z.string().optional().default(''),
+    GITHUB_CALLBACK_URL: z.string().default('http://localhost:3000/api/v1/auth/github/callback'),
+
+    // AES-256-GCM encryption key for GitHub access tokens (32 bytes / 64 hex characters)
+    ENCRYPTION_KEY: z
+      .string()
+      .min(32, 'must be at least 32 characters')
+      .default('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     path: ['JWT_REFRESH_SECRET'],

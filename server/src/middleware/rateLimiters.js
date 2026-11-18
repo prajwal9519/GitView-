@@ -26,3 +26,6 @@ export const credentialsLimiter = rateLimit({
 // Refresh is called automatically by the frontend, so it needs a roomier limit
 // than login. It is still capped to stop abuse.
 export const refreshLimiter = rateLimit({ ...common, limit: 60 });
+
+// Repository imports make upstream GitHub API calls; rate limit to prevent abuse
+export const importRepoLimiter = rateLimit({ ...common, limit: 30 });

@@ -3,6 +3,7 @@
 import { Router } from 'express';
 import { credentialsLimiter, refreshLimiter } from '../../middleware/rateLimiters.js';
 import { validate } from '../../middleware/validate.js';
+import { optionalAuth } from '../../middleware/optionalAuth.js';
 import * as authController from './auth.controller.js';
 import { loginSchema, registerSchema } from './auth.schemas.js';
 
@@ -15,5 +16,9 @@ router.post('/login', credentialsLimiter, validate({ body: loginSchema }), authC
 // access token, so they work even when the access token has already expired.
 router.post('/refresh', refreshLimiter, authController.refresh);
 router.post('/logout', authController.logout);
+
+// GitHub OAuth endpoints
+router.get('/github', authController.githubAuth);
+router.get('/github/callback', optionalAuth, authController.githubCallback);
 
 export default router;

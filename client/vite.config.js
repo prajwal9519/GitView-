@@ -6,5 +6,9 @@ export default defineConfig({
   server: {
     port: 5173,
     open: false
+  },
+  test: {
+    include: ['src/**/*.test.{js,jsx,ts,tsx}'],
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
   }
 });

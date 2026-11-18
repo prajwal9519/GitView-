@@ -11,5 +11,8 @@ export function toPublicUser(user) {
     avatarUrl: user.avatarUrl,
     role: user.role,
     createdAt: user.createdAt,
+    githubConnected: Boolean(
+      user.oauthAccounts?.some((acc) => acc.provider === 'GITHUB') || user.githubConnected
+    ),
   };
 }

@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { repoService } from '../services/repoService';
-import { sandboxService } from '../services/sandboxService';
 import { mockRepositories } from '../data/mockRepositories';
 
 const WorkspaceContext = createContext(null);
@@ -8,68 +7,218 @@ const WorkspaceContext = createContext(null);
 export const WorkspaceProvider = ({ children }) => {
   const [currentRepo, setCurrentRepo] = useState(mockRepositories[0]);
   const [currentBranch, setCurrentBranch] = useState('main');
-  const [openTabs, setOpenTabs] = useState(['button.tsx', 'package.json', 'README.md']);
-  const [activeTab, setActiveTab] = useState('button.tsx');
+  const [openTabs, setOpenTabs] = useState([]);
+  const [activeTab, setActiveTab] = useState('');
   const [fileContent, setFileContent] = useState('');
+  const [fileMeta, setFileMeta] = useState(null);
+  const [fileError, setFileError] = useState(null);
+  const [loadingFile, setLoadingFile] = useState(false);
+
+  // README state
+  const [readmeContent, setReadmeContent] = useState('');
+  const [readmeMeta, setReadmeMeta] = useState(null);
+  const [loadingReadme, setLoadingReadme] = useState(false);
+  const [readmeError, setReadmeError] = useState(null);
+
+  // Directory Tree state
+  const [treeCache, setTreeCache] = useState({}); // { [dirPath]: entries[] }
+  const [loadingTree, setLoadingTree] = useState(false);
+  const [treeError, setTreeError] = useState(null);
+  const [expandedFolders, setExpandedFolders] = useState(new Set(['']));
+
   const [mainViewMode, setMainViewMode] = useState('code'); // 'code' | 'readme' | 'deps'
   const [previewState, setPreviewState] = useState('running'); // 'running' | 'loading' | 'failed'
   const [previewDevice, setPreviewDevice] = useState('desktop'); // 'desktop' | 'mobile'
-  const [isPreviewOpen, setIsPreviewOpen] = useState(true);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState([
-    '> vite v5.1.3 dev server running',
-    '> Local: http://localhost:3000/',
-    '> [vite] hot module reload connected'
+    '> GitView Repository Explorer Online',
+    '> Ready to inspect abstract syntax trees and file contents'
   ]);
-  const [loadingFile, setLoadingFile] = useState(false);
 
-  // Load file content when activeTab or currentRepo changes
+  // Sync branch when currentRepo updates
   useEffect(() => {
-    if (activeTab === 'README.md') {
-      setMainViewMode('readme');
+    if (currentRepo?.defaultBranch && currentRepo.defaultBranch !== currentBranch) {
+      setCurrentBranch(currentRepo.defaultBranch);
     }
-    setLoadingFile(true);
-    repoService.getFileContent(currentRepo.fullName, activeTab)
-      .then((content) => setFileContent(content))
-      .catch(() => setFileContent('// Failed to load file content'))
-      .finally(() => setLoadingFile(false));
-  }, [activeTab, currentRepo]);
+  }, [currentRepo]);
 
-  const selectFile = (fileName) => {
-    if (!openTabs.includes(fileName)) {
-      setOpenTabs([...openTabs, fileName]);
+  // Load directory tree for a specific folder path
+  const fetchDirectory = useCallback(async (dirPath = '', forceRefresh = false, branchOverride = null) => {
+    if (!currentRepo?.id) return;
+    if (!forceRefresh && treeCache[dirPath]) return;
+
+    const targetBranch = branchOverride || currentBranch || currentRepo.defaultBranch || 'main';
+
+    setLoadingTree(true);
+    setTreeError(null);
+    try {
+      const data = await repoService.getDirectoryTree(currentRepo.id, dirPath, targetBranch);
+      setTreeCache((prev) => ({
+        ...prev,
+        [dirPath]: data.entries || [],
+      }));
+    } catch (err) {
+      // Fallback for mock repositories
+      if (currentRepo.id === 'shadcn-ui-ui' || !currentRepo.githubRepoId) {
+        setTreeCache((prev) => ({
+          ...prev,
+          '': [
+            { name: 'apps', path: 'apps', type: 'dir', size: 0, sha: '1' },
+            { name: 'packages', path: 'packages', type: 'dir', size: 0, sha: '2' },
+            { name: 'package.json', path: 'package.json', type: 'file', size: 1200, sha: '3' },
+            { name: 'README.md', path: 'README.md', type: 'file', size: 3400, sha: '4' },
+            { name: 'tsconfig.json', path: 'tsconfig.json', type: 'file', size: 600, sha: '5' }
+          ],
+          'apps': [
+            { name: 'www', path: 'apps/www', type: 'dir', size: 0, sha: '6' }
+          ],
+          'apps/www': [
+            { name: 'button.tsx', path: 'apps/www/button.tsx', type: 'file', size: 850, sha: '7' },
+            { name: 'dialog.tsx', path: 'apps/www/dialog.tsx', type: 'file', size: 920, sha: '8' }
+          ]
+        }));
+      } else {
+        setTreeError(err.message || 'Failed to load directory tree');
+      }
+    } finally {
+      setLoadingTree(false);
     }
-    setActiveTab(fileName);
-    if (fileName === 'README.md') {
+  }, [currentRepo, currentBranch, treeCache]);
+
+  // Load root directory when repo changes
+  useEffect(() => {
+    if (currentRepo?.id) {
+      setTreeCache({});
+      setExpandedFolders(new Set(['']));
+      const initialBranch = currentRepo.defaultBranch || 'main';
+      setCurrentBranch(initialBranch);
+      fetchDirectory('', true, initialBranch);
+    }
+  }, [currentRepo?.id]);
+
+  // Load README.md
+  const loadReadme = useCallback(async () => {
+    if (!currentRepo?.id) return;
+    const targetBranch = currentBranch || currentRepo.defaultBranch || 'main';
+    setLoadingReadme(true);
+    setReadmeError(null);
+    try {
+      const data = await repoService.getFileContent(currentRepo.id, 'README.md', targetBranch);
+      if (typeof data === 'string') {
+        setReadmeContent(data);
+      } else {
+        setReadmeContent(data.content || '');
+        setReadmeMeta(data);
+      }
+    } catch {
+      // Try lowercase readme.md
+      try {
+        const dataLower = await repoService.getFileContent(currentRepo.id, 'readme.md', targetBranch);
+        setReadmeContent(dataLower.content || dataLower);
+        setReadmeMeta(typeof dataLower === 'object' ? dataLower : null);
+      } catch (err) {
+        setReadmeError(err.message || 'No README.md file found in this repository.');
+        setReadmeContent('');
+      }
+    } finally {
+      setLoadingReadme(false);
+    }
+  }, [currentRepo?.id, currentRepo?.defaultBranch, currentBranch]);
+
+  // Load a file's content
+  const loadFile = useCallback(async (filePath) => {
+    if (!filePath || !currentRepo?.id) return;
+    const fileName = filePath.split('/').pop();
+    const targetBranch = currentBranch || currentRepo.defaultBranch || 'main';
+
+    setLoadingFile(true);
+    setFileError(null);
+    setActiveTab(filePath);
+
+    if (!openTabs.includes(filePath)) {
+      setOpenTabs((prev) => [...prev, filePath]);
+    }
+
+    if (filePath.toLowerCase().endsWith('readme.md')) {
       setMainViewMode('readme');
+      loadReadme();
     } else {
       setMainViewMode('code');
     }
+
+    try {
+      const data = await repoService.getFileContent(currentRepo.id, filePath, targetBranch);
+      if (typeof data === 'string') {
+        setFileContent(data);
+        setFileMeta({
+          path: filePath,
+          name: fileName,
+          language: fileName.endsWith('.ts') || fileName.endsWith('.tsx') ? 'typescript' : 'javascript',
+          isBinary: false,
+          tooLarge: false,
+        });
+      } else {
+        setFileContent(data.content || '');
+        setFileMeta(data);
+      }
+    } catch (err) {
+      setFileError(err.message || 'Failed to load file content');
+      setFileContent('');
+      setFileMeta({
+        path: filePath,
+        name: fileName,
+        language: 'plaintext',
+      });
+    } finally {
+      setLoadingFile(false);
+    }
+  }, [currentRepo?.id, currentBranch, openTabs, loadReadme]);
+
+  const selectFile = (filePath) => {
+    loadFile(filePath);
   };
 
-  const closeTab = (fileName, e) => {
+  const closeTab = (tabPath, e) => {
     if (e) e.stopPropagation();
-    const filtered = openTabs.filter((t) => t !== fileName);
+    const filtered = openTabs.filter((t) => t !== tabPath);
     setOpenTabs(filtered);
-    if (activeTab === fileName) {
+    if (activeTab === tabPath) {
       if (filtered.length > 0) {
-        selectFile(filtered[filtered.length - 1]);
+        loadFile(filtered[filtered.length - 1]);
       } else {
         setActiveTab('');
         setFileContent('');
+        setFileMeta(null);
       }
     }
   };
 
+  const toggleFolder = async (folderPath) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderPath)) {
+        next.delete(folderPath);
+      } else {
+        next.add(folderPath);
+        if (!treeCache[folderPath]) {
+          fetchDirectory(folderPath);
+        }
+      }
+      return next;
+    });
+  };
+
   const switchBranch = (newBranch) => {
     setCurrentBranch(newBranch);
-    triggerSandboxRefresh();
+    setTreeCache({});
+    fetchDirectory('', true, newBranch);
   };
 
   const triggerSandboxRefresh = () => {
     setPreviewState('loading');
     setTimeout(() => {
       setPreviewState('running');
-    }, 700);
+    }, 600);
   };
 
   const cyclePreviewState = () => {
@@ -85,12 +234,26 @@ export const WorkspaceProvider = ({ children }) => {
         setCurrentRepo,
         currentBranch,
         switchBranch,
+        treeCache,
+        expandedFolders,
+        loadingTree,
+        treeError,
+        fetchDirectory,
+        toggleFolder,
         openTabs,
         activeTab,
         selectFile,
         closeTab,
         fileContent,
+        fileMeta,
+        fileError,
         loadingFile,
+        loadFile,
+        readmeContent,
+        readmeMeta,
+        loadingReadme,
+        readmeError,
+        loadReadme,
         mainViewMode,
         setMainViewMode,
         previewState,
@@ -101,7 +264,7 @@ export const WorkspaceProvider = ({ children }) => {
         setIsPreviewOpen,
         terminalLogs,
         triggerSandboxRefresh,
-        cyclePreviewState
+        cyclePreviewState,
       }}
     >
       {children}

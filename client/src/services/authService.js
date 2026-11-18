@@ -48,9 +48,9 @@ export const authService = {
   },
 
   /**
-   * Helper URL for future GitHub OAuth integration
+   * GitHub OAuth initiation URL
    */
   getGitHubAuthUrl() {
-    return `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api/v1'}/auth/github`;
+    return `${import.meta.env?.VITE_API_BASE_URL || 'http://localhost:3000/api/v1'}/auth/github`;
   }
 };

@@ -13,7 +13,10 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
     cyclePreviewState,
     triggerSandboxRefresh,
     isPreviewOpen,
-    setIsPreviewOpen
+    setIsPreviewOpen,
+    fetchDirectory,
+    loadFile,
+    activeTab,
   } = useWorkspace();
 
   const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
@@ -21,8 +24,12 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
 
   const handleRefreshClick = () => {
     setIsRefreshing(true);
+    fetchDirectory('', true);
+    if (activeTab) {
+      loadFile(activeTab);
+    }
     triggerSandboxRefresh();
-    setTimeout(() => setIsRefreshing(false), 800);
+    setTimeout(() => setIsRefreshing(false), 600);
   };
 
   const getStatusPillClasses = () => {
@@ -129,7 +136,7 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
 
           <span className="hidden lg:inline-flex items-center gap-1 text-[11px] text-slate-500 font-mono ml-1">
             <span className="material-symbols-outlined text-[14px]">commit</span>
-            <span>{currentRepo.latestCommit || '9a1f2b4'}</span>
+            <span>{(currentRepo.latestCommitSha || currentRepo.latestCommit || 'HEAD').slice(0, 7)}</span>
           </span>
         </div>
       </div>

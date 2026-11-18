@@ -1,15 +1,57 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
 import { repoService } from '../services/repoService';
+import { githubService } from '../services/githubService';
+import { authService } from '../services/authService';
+import { useAuth } from '../context/AuthContext';
+import { Toast } from '../components/common/Toast';
 
 export const ImportRepoPage = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  // Manual import form states
   const [repoUrl, setRepoUrl] = useState('https://github.com/shadcn-ui/ui');
   const [branch, setBranch] = useState('main');
   const [preset, setPreset] = useState('auto');
   const [simulatedState, setSimulatedState] = useState('valid'); // 'valid' | 'invalid' | 'unsupported'
   const [analyzing, setAnalyzing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // GitHub live repos states
+  const [githubRepos, setGithubRepos] = useState([]);
+  const [page, setPage] = useState(1);
+  const [loadingGithub, setLoadingGithub] = useState(false);
+  const [githubError, setGithubError] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [importingRepoName, setImportingRepoName] = useState(null);
+
+  // Notification toast
+  const [toast, setToast] = useState({ show: false, title: '', message: '', variant: 'success' });
+
+  // Fetch GitHub repos if account is connected
+  const fetchGitHubRepos = useCallback(async (targetPage = 1) => {
+    if (!user?.githubConnected) return;
+
+    setLoadingGithub(true);
+    setGithubError(null);
+    try {
+      const res = await githubService.getUserRepositories(targetPage, 10);
+      setGithubRepos(res.data || []);
+      setPage(targetPage);
+    } catch (err) {
+      setGithubError(err.message || 'Failed to load GitHub repositories.');
+    } finally {
+      setLoadingGithub(false);
+    }
+  }, [user?.githubConnected]);
+
+  useEffect(() => {
+    if (user?.githubConnected) {
+      fetchGitHubRepos(1);
+    }
+  }, [user?.githubConnected, fetchGitHubRepos]);
 
   const handleInputChange = async (value) => {
     setRepoUrl(value);
@@ -35,6 +77,68 @@ export const ImportRepoPage = () => {
     }
   };
 
+  // Direct real import via button
+  const handleImport = async (e) => {
+    e?.preventDefault();
+    if (!repoUrl.trim()) return;
+
+    setIsImporting(true);
+    try {
+      const imported = await repoService.importRepository(repoUrl.trim());
+      setToast({
+        show: true,
+        title: 'Repository Imported',
+        message: `Successfully imported ${imported.fullName} to your GitView workspace.`,
+        variant: 'success',
+      });
+      // Refresh live GitHub repositories imported flags
+      if (user?.githubConnected) {
+        fetchGitHubRepos(page);
+      }
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 1200);
+    } catch (err) {
+      setToast({
+        show: true,
+        title: 'Import Failed',
+        message: err.message || 'Could not import repository.',
+        variant: 'error',
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // One-click import from live GitHub list
+  const handleImportGitHubRepo = async (fullName) => {
+    setImportingRepoName(fullName);
+    try {
+      const imported = await repoService.importRepository(fullName);
+      setToast({
+        show: true,
+        title: 'Repository Imported',
+        message: `Successfully imported ${imported.fullName}.`,
+        variant: 'success',
+      });
+      // Mark as imported locally
+      setGithubRepos((prev) =>
+        prev.map((r) =>
+          r.fullName === fullName ? { ...r, isImported: true, importedRepoId: imported.id } : r
+        )
+      );
+    } catch (err) {
+      setToast({
+        show: true,
+        title: 'Import Failed',
+        message: err.message || `Failed to import ${fullName}.`,
+        variant: 'error',
+      });
+    } finally {
+      setImportingRepoName(null);
+    }
+  };
+
   const handleLaunch = (e) => {
     e.preventDefault();
     if (simulatedState === 'invalid') {
@@ -43,6 +147,17 @@ export const ImportRepoPage = () => {
     }
     navigate(`/workspace?repo=${encodeURIComponent(repoUrl)}&branch=${branch}`);
   };
+
+  // Filter GitHub repositories by search
+  const filteredGitHubRepos = githubRepos.filter((repo) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      repo.fullName?.toLowerCase().includes(q) ||
+      repo.description?.toLowerCase().includes(q) ||
+      repo.primaryLanguage?.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <AppLayout>
@@ -59,13 +174,38 @@ export const ImportRepoPage = () => {
         </div>
 
         <div className="flex items-center gap-3 text-xs font-mono">
-          <span className="text-slate-400">
-            Connected account: <span className="text-white font-medium">github.com/alex-rivera</span>
-          </span>
+          {user?.githubConnected ? (
+            <span className="text-slate-400 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>Connected: <strong className="text-white">{user?.username}</strong></span>
+            </span>
+          ) : (
+            <button
+              onClick={() => { window.location.href = authService.getGitHubAuthUrl(); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#090D16] hover:bg-slate-800 border border-border-subtle text-slate-300 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+              </svg>
+              <span>Connect GitHub</span>
+            </button>
+          )}
         </div>
       </header>
 
-      <main className="p-8 max-w-4xl w-full mx-auto space-y-8 flex-1">
+      {/* Floating Toast Notification */}
+      {toast.show && (
+        <div className="fixed top-20 right-8 z-50 max-w-md w-full animate-in fade-in slide-in-from-top-4">
+          <Toast
+            title={toast.title}
+            message={toast.message}
+            variant={toast.variant}
+            onClose={() => setToast((prev) => ({ ...prev, show: false }))}
+          />
+        </div>
+      )}
+
+      <main className="p-8 max-w-5xl w-full mx-auto space-y-8 flex-1">
         {/* Primary Import Wizard Container */}
         <div className="bg-dark-surface-container border border-border-strong rounded-xl p-6 sm:p-8 shadow-xl">
           <div className="mb-6">
@@ -73,7 +213,7 @@ export const ImportRepoPage = () => {
               Target Repository Specification
             </h2>
             <p className="text-body-sm text-slate-400 mt-1">
-              GitView clones the abstract syntax tree and initializes an in-browser WebContainer sandbox.
+              Import any public GitHub repository to explore its AST, inspect dependencies, or initialize an in-browser sandbox.
             </p>
           </div>
 
@@ -81,7 +221,7 @@ export const ImportRepoPage = () => {
             {/* Repository URL Input */}
             <div>
               <label className="block text-label-md font-label text-slate-300 mb-2">
-                GitHub Repository URL <span className="text-red-400">*</span>
+                GitHub Repository URL or Identifier <span className="text-red-400">*</span>
               </label>
               <div className="relative">
                 <span className="material-symbols-outlined absolute left-3.5 top-3 text-slate-400 text-[18px]">
@@ -91,6 +231,7 @@ export const ImportRepoPage = () => {
                   type="text"
                   value={repoUrl}
                   onChange={(e) => handleInputChange(e.target.value)}
+                  placeholder="e.g. facebook/react or https://github.com/facebook/react"
                   className={`w-full bg-[#080C14] border text-white font-mono text-sm pl-11 pr-24 py-2.5 rounded-lg transition-colors focus:outline-none ${
                     simulatedState === 'invalid'
                       ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
@@ -160,7 +301,7 @@ export const ImportRepoPage = () => {
                     onChange={(e) => setBranch(e.target.value)}
                     className="w-full bg-[#080C14] border border-border-strong text-white font-mono text-xs pl-10 pr-4 py-2.5 rounded-lg focus:border-dark-primary focus:ring-1 focus:ring-dark-primary"
                   >
-                    <option value="main">main (default, latest commit 9a1f2b)</option>
+                    <option value="main">main (default branch)</option>
                     <option value="canary">canary (unstable preview)</option>
                     <option value="v0.8.0">tag: v0.8.0</option>
                     <option value="v0.7.0">tag: v0.7.0</option>
@@ -190,82 +331,204 @@ export const ImportRepoPage = () => {
               </div>
             </div>
 
-            {/* Real-Time Repository Pre-Flight Analysis Card */}
-            <div className="p-5 rounded-lg bg-[#080C14] border border-border-subtle space-y-4">
-              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
-                <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
-                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping"></span>
-                  <span>Pre-flight Repository Analysis</span>
-                </div>
-                <span className={`text-xs font-mono ${simulatedState === 'invalid' ? 'text-red-400' : 'text-emerald-400'}`}>
-                  {simulatedState === 'invalid' ? 'Analysis Failed' : 'Ready to Sandbox'}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
-                <div>
-                  <span className="text-slate-500 block">FRAMEWORK</span>
-                  <span className="text-white font-semibold flex items-center gap-1 mt-0.5">
-                    <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                    {simulatedState === 'unsupported' ? 'C / Linux' : 'Next.js 14.1'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">PACKAGE MANAGER</span>
-                  <span className="text-white font-semibold mt-0.5 block">
-                    {simulatedState === 'unsupported' ? 'make' : 'pnpm v8.15'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">DEV PORT DETECTED</span>
-                  <span className="text-emerald-400 font-semibold mt-0.5 block">
-                    {simulatedState === 'unsupported' ? 'N/A' : 'localhost:3000'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">EST. BOOT TIME</span>
-                  <span className="text-accent font-semibold mt-0.5 block">
-                    {simulatedState === 'unsupported' ? 'Code only' : '~1.4 seconds'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Simulated Terminal Log Stream */}
-              <div className="p-3 bg-[#05070B] rounded border border-border-subtle font-mono text-[11px] text-slate-400 space-y-1">
-                <p className="text-slate-500">Checking repository manifest...</p>
-                {simulatedState === 'invalid' ? (
-                  <p className="text-red-400">✖ Failed to clone repository metadata: 404 Not Found</p>
-                ) : simulatedState === 'unsupported' ? (
-                  <>
-                    <p className="text-amber-400">⚠ No package.json detected in root.</p>
-                    <p className="text-slate-400">ℹ AST parsing will run in viewer-only mode.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-emerald-400">✔ Found package.json: {`{ "scripts": { "dev": "next dev" } }`}</p>
-                    <p className="text-emerald-400">✔ WebContainer isolation supported (no C++ native addon requirements)</p>
-                    <p className="text-blue-400">ℹ 18 client-side dependencies will hydrate in isolated iframe</p>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Form Submissions */}
+            {/* Form Actions */}
             <div className="flex items-center justify-between pt-2">
               <Link to="/dashboard" className="text-xs font-mono text-slate-400 hover:text-white">
                 Cancel
               </Link>
 
-              <button
-                type="submit"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-dark-primary hover:bg-blue-500 text-white font-label text-label-lg transition-colors shadow-md active:translate-y-px"
-              >
-                <span className="material-symbols-outlined text-[18px]">rocket_launch</span>
-                <span>Launch Cloud Workspace</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleImport}
+                  disabled={isImporting}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-dark-surface-container-high hover:bg-slate-800 border border-border-strong text-white font-label text-sm transition-colors shadow"
+                >
+                  <span className="material-symbols-outlined text-[18px]">
+                    {isImporting ? 'sync' : 'download'}
+                  </span>
+                  <span>{isImporting ? 'Importing...' : 'Import to GitView'}</span>
+                </button>
+
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-dark-primary hover:bg-blue-500 text-white font-label text-sm transition-colors shadow-md active:translate-y-px"
+                >
+                  <span className="material-symbols-outlined text-[18px]">rocket_launch</span>
+                  <span>Launch Cloud Workspace</span>
+                </button>
+              </div>
             </div>
           </form>
         </div>
+
+        {/* Section: Your GitHub Repositories (Live API) */}
+        <section className="bg-dark-surface-container border border-border-strong rounded-xl p-6 sm:p-8 shadow-xl space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="font-headline text-headline-md font-bold text-white flex items-center gap-2">
+                <svg className="w-5 h-5 fill-current text-slate-300" viewBox="0 0 24 24">
+                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                </svg>
+                <span>Your GitHub Repositories</span>
+              </h2>
+              <p className="text-body-sm text-slate-400 mt-1">
+                Browse and import public repositories from your connected GitHub account.
+              </p>
+            </div>
+
+            {user?.githubConnected && (
+              <div className="relative">
+                <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-500 text-[16px]">
+                  search
+                </span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Filter repositories..."
+                  className="bg-[#080C14] border border-border-strong focus:border-dark-primary text-xs font-mono text-white pl-8 pr-3 py-2 rounded-lg placeholder:text-slate-500"
+                />
+              </div>
+            )}
+          </div>
+
+          {!user?.githubConnected ? (
+            <div className="p-8 rounded-lg bg-[#080C14] border border-border-subtle text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-slate-800/60 border border-slate-700 flex items-center justify-center mx-auto text-slate-300">
+                <svg className="w-6 h-6 fill-current" viewBox="0 0 24 24">
+                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                </svg>
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-white font-headline font-semibold text-sm">
+                  GitHub Account Not Connected
+                </h3>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  Connect your GitHub account to access your repositories directly and import them with a single click.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { window.location.href = authService.getGitHubAuthUrl(); }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-primary hover:bg-blue-500 text-white font-label text-xs font-medium transition-colors shadow"
+              >
+                <span>Connect GitHub Account</span>
+              </button>
+            </div>
+          ) : loadingGithub ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((n) => (
+                <div key={n} className="p-4 rounded-lg bg-[#080C14] border border-border-subtle h-20 animate-pulse"></div>
+              ))}
+            </div>
+          ) : githubError ? (
+            <div className="p-4 rounded-lg bg-red-950/40 border border-red-500/40 flex items-center justify-between text-xs font-mono text-red-300">
+              <span>{githubError}</span>
+              <button
+                onClick={() => fetchGitHubRepos(page)}
+                className="px-2.5 py-1 rounded bg-red-900/60 hover:bg-red-800 text-white"
+              >
+                Retry
+              </button>
+            </div>
+          ) : filteredGitHubRepos.length === 0 ? (
+            <div className="p-6 rounded-lg bg-[#080C14] border border-border-subtle text-center text-xs font-mono text-slate-400">
+              No repositories found matching your filter.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredGitHubRepos.map((repo) => {
+                const isThisImporting = importingRepoName === repo.fullName;
+                return (
+                  <div
+                    key={repo.githubRepoId}
+                    className="p-4 rounded-lg bg-[#080C14] border border-border-subtle hover:border-border-strong transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-blue-400 text-[18px]">
+                          folder
+                        </span>
+                        <h4 className="font-headline font-semibold text-white text-sm truncate">
+                          {repo.fullName}
+                        </h4>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-dark-surface-container border border-border-subtle text-slate-400">
+                          {repo.defaultBranch}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 line-clamp-1">
+                        {repo.description || 'No description provided.'}
+                      </p>
+                      <div className="flex items-center gap-3 text-[11px] font-mono text-slate-500">
+                        {repo.primaryLanguage && (
+                          <span className="flex items-center gap-1 text-slate-400">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                            {repo.primaryLanguage}
+                          </span>
+                        )}
+                        <span>★ {repo.stars}</span>
+                        <span>⑂ {repo.forks}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {repo.isImported ? (
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 rounded text-xs font-mono bg-emerald-950/70 border border-emerald-500/40 text-emerald-400 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[14px]">check</span>
+                            <span>Imported</span>
+                          </span>
+                          <Link
+                            to="/dashboard"
+                            className="px-3 py-1 rounded bg-[#090D16] hover:bg-slate-800 border border-border-subtle text-slate-300 text-xs font-mono transition-colors"
+                          >
+                            View
+                          </Link>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleImportGitHubRepo(repo.fullName)}
+                          disabled={isThisImporting}
+                          className="px-3.5 py-1.5 rounded-lg bg-dark-primary hover:bg-blue-500 disabled:opacity-50 text-white font-label text-xs font-medium transition-colors flex items-center gap-1.5 shadow"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {isThisImporting ? 'hourglass_empty' : 'add'}
+                          </span>
+                          <span>{isThisImporting ? 'Importing...' : 'Import'}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Pagination controls */}
+              <div className="flex items-center justify-between pt-4 border-t border-border-subtle text-xs font-mono text-slate-400">
+                <button
+                  type="button"
+                  onClick={() => fetchGitHubRepos(Math.max(1, page - 1))}
+                  disabled={page <= 1 || loadingGithub}
+                  className="px-3 py-1.5 rounded bg-[#080C14] hover:bg-dark-surface-container-high border border-border-subtle disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Previous
+                </button>
+
+                <span>Page {page}</span>
+
+                <button
+                  type="button"
+                  onClick={() => fetchGitHubRepos(page + 1)}
+                  disabled={githubRepos.length < 10 || loadingGithub}
+                  className="px-3 py-1.5 rounded bg-[#080C14] hover:bg-dark-surface-container-high border border-border-subtle disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* Quick Test Corner: Test Interactive States */}
         <div className="p-4 rounded-xl bg-dark-surface-container border border-border-subtle">

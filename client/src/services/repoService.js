@@ -1,31 +1,94 @@
-import api from './api';
+import api, { formatApiError } from './api';
 import { mockRepositories, mockHistorySessions, mockDependencies } from '../data/mockRepositories';
 import { mockFilesByRepo } from '../data/mockFiles';
 
 export const repoService = {
+  /**
+   * Fetches all imported repositories for the authenticated user from real backend.
+   */
   async getRepositories() {
     try {
       const res = await api.get('/repositories');
-      return res.data;
-    } catch {
-      return mockRepositories;
+      return res.data.data || [];
+    } catch (err) {
+      throw formatApiError(err);
     }
   },
 
+  /**
+   * Fetches a single imported repository by ID.
+   * Falls back to mock data only for preset mock workspace repositories until explorer phase is complete.
+   */
   async getRepositoryById(id) {
     try {
-      const res = await api.get(`/repositories/${id}`);
-      return res.data;
+      const res = await api.get(`/repositories/${encodeURIComponent(id)}`);
+      return res.data.data?.repository;
     } catch {
+      // Fallback for mock IDs used by workspace preview (e.g. 'shadcn-ui-ui')
       const found = mockRepositories.find((r) => r.id === id || r.fullName === id);
       return found || mockRepositories[0];
     }
   },
 
+  /**
+   * Imports a new repository via GitHub repository identifier or URL.
+   */
+  async importRepository(repoIdentifier) {
+    try {
+      const res = await api.post('/repositories', { repo: repoIdentifier });
+      return res.data.data?.repository;
+    } catch (err) {
+      throw formatApiError(err);
+    }
+  },
+
+  /**
+   * Deletes an imported repository by ID.
+   */
+  async deleteRepository(id) {
+    try {
+      const res = await api.delete(`/repositories/${encodeURIComponent(id)}`);
+      return res.data.data;
+    } catch (err) {
+      throw formatApiError(err);
+    }
+  },
+
+  /**
+   * Fetches real directory contents from backend GitHub Contents API.
+   */
+  async getDirectoryTree(repoId, path = '', ref) {
+    try {
+      const res = await api.get(`/repositories/${encodeURIComponent(repoId)}/tree`, {
+        params: { path, ref },
+      });
+      return res.data.data;
+    } catch (err) {
+      throw formatApiError(err);
+    }
+  },
+
+  /**
+   * Fetches real file content and metadata from backend GitHub Contents API.
+   */
+  async getFileContent(repoId, path, ref) {
+    try {
+      const res = await api.get(`/repositories/${encodeURIComponent(repoId)}/file`, {
+        params: { path, ref },
+      });
+      return res.data.data;
+    } catch (err) {
+      throw formatApiError(err);
+    }
+  },
+
+  /**
+   * Mock data preserved for workspace and preview session history until future phases.
+   */
   async getHistorySessions() {
     try {
       const res = await api.get('/repositories/history');
-      return res.data;
+      return res.data.data || mockHistorySessions;
     } catch {
       return mockHistorySessions;
     }
@@ -41,18 +104,6 @@ export const repoService = {
     }
   },
 
-  async getFileContent(repoFullName, filePath) {
-    try {
-      const res = await api.get(`/repositories/${encodeURIComponent(repoFullName)}/files`, {
-        params: { path: filePath }
-      });
-      return res.data;
-    } catch {
-      const repo = mockFilesByRepo[repoFullName] || mockFilesByRepo['shadcn-ui/ui'];
-      const content = repo.contents[filePath] || `// File: ${filePath}\n// Content loaded in GitView\nexport default {};`;
-      return content;
-    }
-  },
 
   async getDependencies(repoFullName) {
     try {
@@ -64,8 +115,7 @@ export const repoService = {
   },
 
   async preflightAnalyze(repoUrl) {
-    // Simulated preflight analysis
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     
     if (repoUrl.includes('non-existent') || repoUrl.includes('ghost')) {
       throw new Error('Repository not found or private. Ensure URL is correct or grant GitHub OAuth permissions.');

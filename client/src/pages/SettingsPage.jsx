@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
 import { useAuth } from '../context/AuthContext';
+import { authService } from '../services/authService';
 import { Toast } from '../components/common/Toast';
 
 export const SettingsPage = () => {
+  const [searchParams] = useSearchParams();
   const { user, updateUserProfile, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -17,13 +19,36 @@ export const SettingsPage = () => {
   const [strictNetwork, setStrictNetwork] = useState(true);
   const [hardwareAccel, setHardwareAccel] = useState(true);
 
-  const [showToast, setShowToast] = useState(false);
+  const [toast, setToast] = useState({ show: false, title: '', message: '', variant: 'success' });
+
+  useEffect(() => {
+    if (searchParams.get('github') === 'connected') {
+      setToast({
+        show: true,
+        title: 'GitHub Connected',
+        message: 'Your GitHub account has been successfully linked to GitView.',
+        variant: 'success',
+      });
+    } else if (searchParams.get('error') === 'github_conflict') {
+      setToast({
+        show: true,
+        title: 'Connection Conflict',
+        message: 'This GitHub account is already linked to another GitView user account.',
+        variant: 'danger',
+      });
+    }
+  }, [searchParams]);
 
   const handleSave = (e) => {
     e.preventDefault();
     updateUserProfile({ username });
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
+    setToast({
+      show: true,
+      title: 'Settings Saved',
+      message: 'Your developer profile and security preferences have been updated.',
+      variant: 'success',
+    });
+    setTimeout(() => setToast((t) => ({ ...t, show: false })), 3000);
   };
 
   const handleLogout = async () => {
@@ -31,22 +56,23 @@ export const SettingsPage = () => {
     navigate('/login');
   };
 
-  const handleReauth = () => {
-    alert('GitHub OAuth integration will be enabled in Phase 2.');
+  const handleConnectGitHub = () => {
+    window.location.href = authService.getGitHubAuthUrl();
   };
 
   const userInitials = (user?.username || 'GV').slice(0, 2).toUpperCase();
+  const isGitHubLinked = Boolean(user?.githubConnected);
 
   return (
     <AppLayout>
       {/* Toast Notification */}
-      {showToast && (
+      {toast.show && (
         <div className="fixed top-6 right-6 z-50">
           <Toast
-            title="Settings Saved"
-            message="Your developer profile and security preferences have been updated."
-            variant="success"
-            onClose={() => setShowToast(false)}
+            title={toast.title}
+            message={toast.message}
+            variant={toast.variant}
+            onClose={() => setToast((t) => ({ ...t, show: false }))}
           />
         </div>
       )}
@@ -86,8 +112,12 @@ export const SettingsPage = () => {
 
           <div className="flex items-center gap-5">
             <div className="relative">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center text-white font-mono text-xl font-bold border-2 border-border-strong">
-                {userInitials}
+              <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center text-white font-mono text-xl font-bold border-2 border-border-strong overflow-hidden">
+                {user?.avatarUrl ? (
+                  <img src={user.avatarUrl} alt={username} className="w-full h-full object-cover" />
+                ) : (
+                  userInitials
+                )}
               </div>
             </div>
             <div>
@@ -134,7 +164,7 @@ export const SettingsPage = () => {
               Connected GitHub Accounts
             </h2>
             <p className="text-body-sm text-slate-400">
-              Authorize access to clone private repositories and trigger live previews
+              Authorize access to explore public and connected GitHub repositories
             </p>
           </div>
 
@@ -149,22 +179,34 @@ export const SettingsPage = () => {
               </svg>
               <div>
                 <div className="text-sm font-bold text-white flex items-center gap-2">
-                  <span>GitHub Integration</span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950/80 text-blue-400 border border-blue-500/30">
-                    Phase 2
-                  </span>
+                  <span>GitHub Identity</span>
+                  {isGitHubLinked ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-400 border border-emerald-500/30">
+                      Connected
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-400 border border-border-subtle">
+                      Not Linked
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs font-mono text-slate-400">
-                  OAuth Scopes will include: repo (full), read:org, user:email
+                  {isGitHubLinked
+                    ? 'Scopes: read:user, user:email (Tokens securely encrypted with AES-256-GCM)'
+                    : 'Link your GitHub account for instant single-click sign in'}
                 </p>
               </div>
             </div>
 
             <button
-              onClick={handleReauth}
-              className="px-3 py-1.5 rounded bg-dark-surface-container hover:bg-slate-700 text-xs font-mono text-slate-300 border border-border-subtle transition-colors"
+              onClick={handleConnectGitHub}
+              className={`px-3 py-1.5 rounded text-xs font-mono border transition-colors ${
+                isGitHubLinked
+                  ? 'bg-dark-surface-container hover:bg-slate-700 text-slate-300 border-border-subtle'
+                  : 'bg-dark-primary hover:bg-blue-500 text-white border-transparent'
+              }`}
             >
-              Connect (Phase 2)
+              {isGitHubLinked ? 'Re-authenticate' : 'Connect GitHub'}
             </button>
           </div>
         </section>
