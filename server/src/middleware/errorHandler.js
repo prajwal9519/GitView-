@@ -9,6 +9,8 @@
 import { ZodError } from 'zod';
 import { env } from '../config/env.js';
 import { AppError, BadRequestError, ConflictError, NotFoundError } from '../utils/AppError.js';
+import { isCandidatePreviewRequest } from '../modules/preview/previewGateway.js';
+import { getPreviewSecurityHeaders } from '../modules/preview/previewCsp.js';
 
 function toAppError(err) {
   if (err instanceof AppError) return err;
@@ -39,6 +41,16 @@ function toAppError(err) {
 // eslint-disable-next-line no-unused-vars
 export function errorHandler(err, req, res, next) {
   if (res.headersSent) return next(err);
+
+  // Milestone 7, Task 4: Injected defensive security headers for preview errors
+  try {
+    if (isCandidatePreviewRequest(req)) {
+      const secHeaders = getPreviewSecurityHeaders({ isError: true });
+      if (typeof res.set === 'function') {
+        res.set(secHeaders);
+      }
+    }
+  } catch {}
 
   const known = toAppError(err);
 

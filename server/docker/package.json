@@ -1,0 +1,10 @@
+{
+  "name": "gitview-docker-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "vite": "5.4.14",
+    "@vitejs/plugin-react": "4.3.4"
+  }
+}

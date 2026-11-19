@@ -52,7 +52,7 @@ describe('AES-256-GCM Token Encryption', () => {
     const encrypted = encryptToken(token, testKeyHex);
     const [iv, tag, cipher] = encrypted.split(':');
 
-    const tamperedTag = '00' + tag.slice(2);
+    const tamperedTag = tag.startsWith('00') ? 'ff' + tag.slice(2) : '00' + tag.slice(2);
     const tamperedPayload = `${iv}:${tamperedTag}:${cipher}`;
 
     expect(() => decryptToken(tamperedPayload, testKeyHex)).toThrow();
@@ -63,7 +63,7 @@ describe('AES-256-GCM Token Encryption', () => {
     const encrypted = encryptToken(token, testKeyHex);
     const [iv, tag, cipher] = encrypted.split(':');
 
-    const tamperedIv = 'aa' + iv.slice(2);
+    const tamperedIv = iv.startsWith('aa') ? 'bb' + iv.slice(2) : 'aa' + iv.slice(2);
     const tamperedPayload = `${tamperedIv}:${tag}:${cipher}`;
 
     expect(() => decryptToken(tamperedPayload, testKeyHex)).toThrow();

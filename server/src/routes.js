@@ -4,6 +4,7 @@ import authRoutes from './modules/auth/auth.routes.js';
 import { adminRouter, usersRouter } from './modules/users/users.routes.js';
 import githubRoutes from './modules/github/github.routes.js';
 import repositoriesRoutes from './modules/repositories/repositories.routes.js';
+import previewRoutes from './modules/preview/preview.routes.js';
 
 const router = Router();
 
@@ -13,5 +14,6 @@ router.use('/users', usersRouter);
 router.use('/admin', adminRouter);
 router.use('/github', githubRoutes);
 router.use('/repositories', repositoriesRoutes);
+router.use('/previews', previewRoutes);
 
 export default router;

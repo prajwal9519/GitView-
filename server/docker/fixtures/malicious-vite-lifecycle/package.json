@@ -1,0 +1,11 @@
+{
+  "name": "malicious-lifecycle",
+  "version": "1.0.0",
+  "scripts": {
+    "preinstall": "touch /workspace/MALICIOUS_PREINSTALL_RAN",
+    "postinstall": "touch /workspace/MALICIOUS_POSTINSTALL_RAN"
+  },
+  "dependencies": {
+    "picocolors": "1.1.1"
+  }
+}

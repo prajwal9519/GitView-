@@ -2,10 +2,14 @@
 import { app } from './app.js';
 import { env } from './config/env.js';
 import { prisma } from './lib/prisma.js';
+import { attachPreviewWebSocketUpgrade } from './modules/preview/previewWebSocket.js';
 
 const server = app.listen(env.PORT, () => {
   console.log(`GitView API listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);
 });
+
+// Milestone 7, Task 5: Handle preview domain WebSocket upgrades
+attachPreviewWebSocketUpgrade(server);
 
 // Graceful shutdown: stop accepting requests, let running ones finish, close the DB pool.
 function shutdown(signal, exitCode = 0) {

@@ -32,10 +32,50 @@ const schema = z
       .string()
       .min(32, 'must be at least 32 characters')
       .default('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+
+    // Dedicated AES-256-GCM encryption key for preview tokens (32 bytes / 64 hex characters)
+    PREVIEW_TOKEN_ENCRYPTION_KEY: z
+      .string()
+      .min(32, 'must be at least 32 characters')
+      .default('fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210'),
+
+    // Dedicated HMAC-SHA256 secret for gateway-to-sidecar handshake (canonical 64 hex chars = 32 bytes)
+    GITVIEW_SIDECAR_HANDSHAKE_KEY: z
+      .string()
+      .min(32, 'must be at least 32 characters')
+      .regex(/^[0-9a-fA-F]{64}$/, 'must be a 64-character hex string (32 bytes)')
+      .default('0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b'),
+
+    // Milestone 7: Production Preview Gateway & Redis Ticket Registry
+    REDIS_URL: z.string().url('must be a valid redis URL, e.g. redis://127.0.0.1:6379').optional(),
+    PREVIEW_DOMAIN: z.string().optional().default(''),
+    PREVIEW_BASE_URL: z.string().url().optional(),
+    PREVIEW_HTTPS: z.enum(['true', 'false']).default('false'),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     path: ['JWT_REFRESH_SECRET'],
     message: 'must be different from JWT_ACCESS_SECRET',
+  })
+  .refine((e) => !e.PREVIEW_TOKEN_ENCRYPTION_KEY || e.PREVIEW_TOKEN_ENCRYPTION_KEY !== e.ENCRYPTION_KEY, {
+    path: ['PREVIEW_TOKEN_ENCRYPTION_KEY'],
+    message: 'must be different from ENCRYPTION_KEY',
+  })
+  .refine((e) => !e.GITVIEW_SIDECAR_HANDSHAKE_KEY || e.GITVIEW_SIDECAR_HANDSHAKE_KEY !== e.ENCRYPTION_KEY, {
+    path: ['GITVIEW_SIDECAR_HANDSHAKE_KEY'],
+    message: 'must be different from ENCRYPTION_KEY',
+  })
+  .refine(
+    (e) =>
+      !e.GITVIEW_SIDECAR_HANDSHAKE_KEY ||
+      e.GITVIEW_SIDECAR_HANDSHAKE_KEY !== e.PREVIEW_TOKEN_ENCRYPTION_KEY,
+    {
+      path: ['GITVIEW_SIDECAR_HANDSHAKE_KEY'],
+      message: 'must be different from PREVIEW_TOKEN_ENCRYPTION_KEY',
+    }
+  )
+  .refine((e) => e.NODE_ENV !== 'production' || Boolean(e.REDIS_URL), {
+    path: ['REDIS_URL'],
+    message: 'is required in production environment',
   });
 
 const result = schema.safeParse(process.env);
@@ -49,5 +89,6 @@ if (!result.success) {
   process.exit(1);
 }
 
+export const envSchema = schema;
 export const env = Object.freeze(result.data);
 export const isProduction = env.NODE_ENV === 'production';

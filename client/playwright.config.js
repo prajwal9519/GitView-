@@ -23,6 +23,20 @@ export default defineConfig({
     actionTimeout: 15000,
     navigationTimeout: 30000,
   },
+  webServer: [
+    {
+      command: 'node --env-file=../server/.env ../server/src/server.js',
+      url: 'http://localhost:3000/api/v1/health',
+      reuseExistingServer: true,
+      timeout: 30000,
+    },
+    {
+      command: 'npm run dev',
+      url: 'http://localhost:5173',
+      reuseExistingServer: true,
+      timeout: 30000,
+    },
+  ],
   projects: [
     {
       name: 'chromium',

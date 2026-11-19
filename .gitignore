@@ -9,3 +9,9 @@
 *.log
 
 *.local
+# Generated test and build artifacts
+/client/playwright-report/
+/client/test-results/
+/server/.vitest/
+/docs/pdf/inspections/
+**/.vite/

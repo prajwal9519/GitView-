@@ -1,4 +1,4 @@
-// GitView database schema - authentication & GitHub OAuth phase.
+// GitView database schema - authentication, GitHub OAuth & Live Preview Engine phase.
 
 generator client {
   provider = "prisma-client"
@@ -7,6 +7,7 @@ generator client {
   // Node loads the generated TypeScript files directly (type stripping), so
   // their imports must say ".ts". Needs Node >= 22.18.
   importFileExtension = "ts"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -23,6 +24,26 @@ enum Provider {
   GITHUB
 }
 
+enum PreviewStatus {
+  PENDING
+  FETCHING
+  BUILDING
+  STARTING
+  RUNNING
+  STOPPING
+  STOPPED
+  FAILED
+  EXPIRED
+}
+
+enum FrameworkType {
+  STATIC
+  VITE_REACT
+  VITE_VANILLA
+  REACT
+  UNKNOWN
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String?  @unique // nullable: GitHub users may hide their email
@@ -33,9 +54,10 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  refreshTokens RefreshToken[]
-  oauthAccounts OAuthAccount[]
-  repositories  Repository[]
+  refreshTokens   RefreshToken[]
+  oauthAccounts   OAuthAccount[]
+  repositories    Repository[]
+  previewSessions PreviewSession[]
 }
 
 // One row per refresh token we ever issued. This table is what makes refresh
@@ -92,9 +114,48 @@ model Repository {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  previewSessions PreviewSession[]
 
   @@unique([userId, githubRepoId])
   @@index([userId])
   @@index([fullName])
+}
+
+// Live application preview sessions.
+// Implements Option A proxy-sidecar isolation architecture.
+model PreviewSession {
+  id                String        @id @default(uuid())
+  userId            String
+  repositoryId      String
+  status            PreviewStatus @default(PENDING)
+  framework         FrameworkType @default(UNKNOWN)
+  isActive          Boolean       @default(true)
+  tokenHash         String        @unique // SHA-256 of preview token for O(1) indexed lookup
+  previewTokenEnc   String        // AES-256-GCM encrypted token for reconstruction on workspace refresh
+  commitSha         String
+  branch            String
+  runnerContainerId String?       // Isolated preview runner Docker container ID (internal)
+  proxyContainerId  String?       // Trusted reverse proxy sidecar Docker container ID (actual Docker engine ID)
+  proxyInstanceId   String?       // Cryptographically random immutable UUID generated for sidecar instance identity
+  proxyPort         Int?          // Dynamically assigned host loopback port for proxy sidecar
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  startedAt         DateTime?
+  stoppedAt         DateTime?
+  expiresAt         DateTime      // Hard ceiling TTL
+  lastActiveAt      DateTime      @default(now()) // Updated on activity for idle timeout
+  errorCode         String?
+  errorMessage      String?
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  // Enforces MVP concurrency policy: max 1 active preview session per user
+  @@unique([userId], where: { isActive: true })
+  @@index([userId])
+  @@index([repositoryId])
+  @@index([status])
+  @@index([isActive, expiresAt])
+  @@index([isActive, lastActiveAt])
 }

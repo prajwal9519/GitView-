@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     setupFiles: ['./tests/setup.js'],
+    include: ['tests/**/*.test.js'],
     // All test files share ONE database, so they must not run at the same time.
     fileParallelism: false,
     testTimeout: 20_000,

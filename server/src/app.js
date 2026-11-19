@@ -11,13 +11,25 @@ import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { notFound } from './middleware/notFound.js';
 import routes from './routes.js';
+import { handleBootstrap } from './modules/preview/previewBootstrap.controller.js';
+import { previewGatewayMiddleware } from './modules/preview/previewGateway.js';
 
 export const app = express();
+
+// Redact sensitive query parameters (e.g. ?ticket=...) from access logs
+morgan.token('url', (req) => {
+  const url = req.originalUrl || req.url || '';
+  return url.replace(/([?&]ticket=)[^&]+/g, '$1[REDACTED]');
+});
 
 // Behind a reverse proxy (Render, Heroku, nginx) every request appears to come
 // from the proxy. Telling Express how many proxies to trust makes req.ip the
 // real client, which the rate limiter needs. 0 = no proxy.
 app.set('trust proxy', env.TRUST_PROXY);
+
+// Milestone 7, Task 3: Dedicated Production HTTP Preview Gateway for preview subdomains
+// Must be mounted before helmet(), cors(), and express.json() to preserve body streaming and avoid cross-origin header conflicts
+app.use(previewGatewayMiddleware);
 
 // Sets security headers (CSP, no MIME sniffing, ...) and removes X-Powered-By.
 app.use(helmet());
@@ -34,6 +46,9 @@ app.use(express.json({ limit: '100kb' }));
 
 // Parses the Cookie header into req.cookies (we read the auth tokens from it).
 app.use(cookieParser());
+
+// Milestone 7: Root-level preview bootstrap endpoint
+app.get('/__gitview_bootstrap', handleBootstrap);
 
 app.use('/api/v1', routes);
 

@@ -240,6 +240,36 @@ export async function fetchRepository(githubToken, owner, repo) {
  */
 export async function fetchContents(githubToken, owner, repo, path = '', ref = null) {
   const cleanPath = validatePath(path);
+  if (owner === 'gitview-fixtures') {
+    const fs = await import('node:fs');
+    const pathModule = await import('node:path');
+    const fixtureBase = pathModule.resolve(import.meta.dirname, '../../docker/fixtures', repo);
+    const targetPath = cleanPath ? pathModule.join(fixtureBase, cleanPath) : fixtureBase;
+    if (fs.existsSync(targetPath)) {
+      const stat = fs.statSync(targetPath);
+      if (stat.isDirectory()) {
+        const entries = fs.readdirSync(targetPath, { withFileTypes: true });
+        return entries.map((e) => ({
+          name: e.name,
+          path: cleanPath ? `${cleanPath}/${e.name}` : e.name,
+          type: e.isDirectory() ? 'dir' : 'file',
+          size: e.isFile() ? fs.statSync(pathModule.join(targetPath, e.name)).size : 0,
+          sha: '0123456789abcdef0123456789abcdef01234567',
+        }));
+      } else {
+        const content = fs.readFileSync(targetPath);
+        return {
+          name: pathModule.basename(targetPath),
+          path: cleanPath,
+          type: 'file',
+          size: stat.size,
+          content: content.toString('base64'),
+          encoding: 'base64',
+          sha: '0123456789abcdef0123456789abcdef01234567',
+        };
+      }
+    }
+  }
   let url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents`;
   if (cleanPath) {
     const encodedSegments = cleanPath.split('/').map(encodeURIComponent).join('/');
@@ -255,6 +285,9 @@ export async function fetchContents(githubToken, owner, repo, path = '', ref = n
  * Fetches latest commit SHA of default branch from GitHub.
  */
 export async function fetchDefaultBranchCommit(githubToken, owner, repo, defaultBranch) {
+  if (owner === 'gitview-fixtures') {
+    return '0123456789abcdef0123456789abcdef01234567';
+  }
   try {
     const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(defaultBranch)}`;
     const data = await githubFetch(url, { method: 'GET' }, githubToken);

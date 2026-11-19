@@ -202,14 +202,22 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
           <span>⌘K</span>
         </button>
 
-        {/* Interactive Preview Status Badge (Click cycles demo states) */}
+        {/* Interactive Preview Trigger Badge */}
         <div
-          onClick={cyclePreviewState}
-          title="Click to cycle Preview States (Running / Booting / Failed)"
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border cursor-pointer hover:opacity-90 transition-colors ${status.bg}`}
+          onClick={() => setIsPreviewOpen(!isPreviewOpen)}
+          title="Toggle Live Preview Panel"
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border cursor-pointer hover:opacity-90 transition-colors ${
+            isPreviewOpen
+              ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-400'
+              : 'bg-blue-950/70 border-blue-500/40 text-blue-300'
+          }`}
         >
-          <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
-          <span>{status.text}</span>
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              isPreviewOpen ? 'bg-emerald-400 animate-pulse' : 'bg-blue-400'
+            }`}
+          ></span>
+          <span>{isPreviewOpen ? 'Preview: Active' : 'Preview: Launch'}</span>
         </div>
 
         {/* Hot Reload Sandbox Button */}

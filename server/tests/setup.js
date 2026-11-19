@@ -26,6 +26,7 @@ process.env.AUTH_RATE_LIMIT_MAX = '1000'; // out of the way (rateLimit.test.js l
 process.env.JWT_ACCESS_SECRET = crypto.randomBytes(32).toString('hex');
 process.env.JWT_REFRESH_SECRET = crypto.randomBytes(32).toString('hex');
 process.env.ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+process.env.PREVIEW_TOKEN_ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
 process.env.GITHUB_CLIENT_ID = 'test_github_client_id';
 process.env.GITHUB_CLIENT_SECRET = 'test_github_client_secret';
 
