@@ -26,7 +26,7 @@ export const repoService = {
     } catch {
       // Fallback for mock IDs used by workspace preview (e.g. 'shadcn-ui-ui')
       const found = mockRepositories.find((r) => r.id === id || r.fullName === id);
-      return found || mockRepositories[0];
+      return found || null;
     }
   },
 
@@ -83,14 +83,14 @@ export const repoService = {
   },
 
   /**
-   * Mock data preserved for workspace and preview session history until future phases.
+   * Fetches preview session history from backend.
    */
   async getHistorySessions() {
     try {
       const res = await api.get('/repositories/history');
-      return res.data.data || mockHistorySessions;
+      return res.data.data || [];
     } catch {
-      return mockHistorySessions;
+      return [];
     }
   },
 
@@ -147,5 +147,18 @@ export const repoService = {
         'ℹ 18 client-side dependencies will hydrate in isolated iframe'
       ]
     };
-  }
+  },
+
+  /**
+   * Passively detects framework and relative project root for an imported repository.
+   */
+  async detectRepository(id, ref = null) {
+    try {
+      const url = `/repositories/${encodeURIComponent(id)}/detect${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+      const res = await api.get(url);
+      return res.data?.data || null;
+    } catch (err) {
+      throw formatApiError(err);
+    }
+  },
 };

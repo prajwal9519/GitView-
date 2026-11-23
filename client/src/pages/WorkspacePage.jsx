@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { WorkspaceToolbar } from '../components/workspace/WorkspaceToolbar';
 import { FileExplorer } from '../components/workspace/FileExplorer';
@@ -30,17 +30,24 @@ export const WorkspacePage = () => {
   const [isResizingRight, setIsResizingRight] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [loadingRepo, setLoadingRepo] = useState(true);
+  const [repoError, setRepoError] = useState(null);
 
   // Sync real repository if passed in URL params or route
   useEffect(() => {
+    let isCancelled = false;
     const targetIdentifier = repoId || searchParams.get('repo') || searchParams.get('id');
 
     async function resolveRepository() {
+      setLoadingRepo(true);
+      setRepoError(null);
+
       if (targetIdentifier) {
         try {
           const repo = await repoService.getRepositoryById(targetIdentifier);
-          if (repo) {
+          if (repo && !isCancelled) {
             setCurrentRepo(repo);
+            setLoadingRepo(false);
             return;
           }
         } catch {
@@ -51,29 +58,48 @@ export const WorkspacePage = () => {
       // Try user's imported repositories
       try {
         const userRepos = await repoService.getRepositories();
-        if (Array.isArray(userRepos) && userRepos.length > 0) {
+        if (Array.isArray(userRepos) && userRepos.length > 0 && !isCancelled) {
           if (targetIdentifier) {
             const match = userRepos.find(
               (r) => r.id === targetIdentifier || r.fullName === targetIdentifier || targetIdentifier.includes(r.name)
             );
             if (match) {
               setCurrentRepo(match);
+              setLoadingRepo(false);
               return;
             }
           }
           setCurrentRepo(userRepos[0]);
+          setLoadingRepo(false);
           return;
         }
       } catch {
         // Fallback to mock
       }
 
-      // Fallback for preset preview repos
-      const match = mockRepositories.find((r) => r.id === targetIdentifier || r.fullName === targetIdentifier);
-      setCurrentRepo(match || mockRepositories[0]);
+      if (!isCancelled) {
+        // Fallback for preset preview repos if specifically requested
+        const match = mockRepositories.find((r) => r.id === targetIdentifier || r.fullName === targetIdentifier);
+        if (match) {
+          setCurrentRepo(match);
+          setLoadingRepo(false);
+          return;
+        }
+
+        setCurrentRepo(null);
+        setLoadingRepo(false);
+        if (targetIdentifier) {
+          setRepoError(`Repository '${targetIdentifier}' not found or access denied.`);
+        } else {
+          setRepoError('No imported repositories found. Please import a repository from the dashboard.');
+        }
+      }
     }
 
     resolveRepository();
+    return () => {
+      isCancelled = true;
+    };
   }, [repoId, searchParams, setCurrentRepo]);
 
   // Global Keyboard shortcuts (⌘K for command palette, ⌘P for search)
@@ -134,6 +160,37 @@ export const WorkspacePage = () => {
     'README.md',
     'tsconfig.json',
   ];
+
+  if (loadingRepo && !currentRepo) {
+    return (
+      <div className="min-h-screen bg-[#070A10] text-dark-on-surface font-body flex flex-col items-center justify-center space-y-4">
+        <span className="w-10 h-10 border-2 border-dark-primary border-t-transparent rounded-full animate-spin"></span>
+        <p className="text-xs font-mono text-slate-400">Resolving workspace repository...</p>
+      </div>
+    );
+  }
+
+  if (repoError && !currentRepo) {
+    return (
+      <div className="min-h-screen bg-[#070A10] text-dark-on-surface font-body flex flex-col items-center justify-center p-6">
+        <div className="max-w-md w-full bg-dark-surface-container border border-border-subtle rounded-xl p-6 text-center space-y-4">
+          <div className="w-12 h-12 rounded-full bg-red-950/50 border border-red-500/40 text-red-400 mx-auto flex items-center justify-center">
+            <span className="material-symbols-outlined text-[24px]">error</span>
+          </div>
+          <h2 className="font-headline text-headline-sm text-white font-semibold">Workspace Unavailable</h2>
+          <p className="text-xs font-mono text-slate-400">{repoError}</p>
+          <div className="pt-2 flex justify-center gap-3 font-label text-xs">
+            <Link to="/dashboard" className="px-4 py-2 rounded-lg bg-dark-surface-container-high hover:bg-slate-800 text-slate-300 border border-border-subtle transition-colors">
+              Dashboard
+            </Link>
+            <Link to="/import" className="px-4 py-2 rounded-lg bg-dark-primary hover:bg-blue-500 text-white font-medium transition-colors">
+              Import Repository
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#070A10] text-dark-on-surface font-body antialiased flex flex-col h-screen overflow-hidden selection:bg-accent/30 selection:text-white">

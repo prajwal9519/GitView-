@@ -86,4 +86,92 @@ describe('GitHub Detection Adapter (detectorAdapter.js)', () => {
 
     fetchSpy.mockRestore();
   });
+
+  it('detects nested Vite React application in candidate directory (e.g. vite-project)', async () => {
+    const pkg = {
+      name: 'nested-vite-react',
+      dependencies: { react: '^19.2.5', 'react-dom': '^19.2.5' },
+      devDependencies: { vite: '^8.0.10', '@vitejs/plugin-react': '^6.0.1' },
+    };
+    const b64 = Buffer.from(JSON.stringify(pkg), 'utf8').toString('base64');
+
+    const fetchSpy = vi.spyOn(githubClient, 'fetchContents')
+      // 1st call: root directory contents (contains README and vite-project dir)
+      .mockResolvedValueOnce([
+        { name: 'README.md', path: 'README.md', type: 'file', size: 1200 },
+        { name: 'vite-project', path: 'vite-project', type: 'dir' },
+      ])
+      // 2nd call: nested directory contents (vite-project)
+      .mockResolvedValueOnce([
+        { name: 'index.html', path: 'vite-project/index.html', type: 'file', size: 400 },
+        { name: 'package.json', path: 'vite-project/package.json', type: 'file', size: 450 },
+        { name: 'package-lock.json', path: 'vite-project/package-lock.json', type: 'file', size: 50000 },
+        { name: 'src', path: 'vite-project/src', type: 'dir' },
+      ])
+      // 3rd call: nested package.json content
+      .mockResolvedValueOnce({
+        name: 'package.json',
+        path: 'vite-project/package.json',
+        size: 450,
+        encoding: 'base64',
+        content: b64,
+      });
+
+    const res = await detectRepositoryFramework('fake_token', 'user', 'SkyNav');
+
+    expect(res.supported).toBe(true);
+    expect(res.framework).toBe('VITE_FRONTEND');
+    expect(res.variant).toBe('REACT');
+    expect(res.projectRoot).toBe('vite-project');
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('resolves standard priority when multiple candidate nested roots exist', async () => {
+    const pkg = {
+      name: 'client-app',
+      dependencies: { react: '^18.0.0' },
+      devDependencies: { vite: '^5.0.0' },
+    };
+    const b64 = Buffer.from(JSON.stringify(pkg), 'utf8').toString('base64');
+
+    const fetchSpy = vi.spyOn(githubClient, 'fetchContents')
+      // Root items
+      .mockResolvedValueOnce([
+        { name: 'client', path: 'client', type: 'dir' },
+        { name: 'other', path: 'other', type: 'dir' },
+      ])
+      // Candidate 1: client
+      .mockResolvedValueOnce([
+        { name: 'index.html', path: 'client/index.html', type: 'file', size: 300 },
+        { name: 'package.json', path: 'client/package.json', type: 'file', size: 300 },
+        { name: 'package-lock.json', path: 'client/package-lock.json', type: 'file', size: 20000 },
+      ])
+      // Candidate 1 package.json
+      .mockResolvedValueOnce({
+        name: 'package.json',
+        content: b64,
+        encoding: 'base64',
+      })
+      // Candidate 2: other
+      .mockResolvedValueOnce([
+        { name: 'index.html', path: 'other/index.html', type: 'file', size: 300 },
+        { name: 'package.json', path: 'other/package.json', type: 'file', size: 300 },
+        { name: 'package-lock.json', path: 'other/package-lock.json', type: 'file', size: 20000 },
+      ])
+      // Candidate 2 package.json
+      .mockResolvedValueOnce({
+        name: 'package.json',
+        content: b64,
+        encoding: 'base64',
+      });
+
+    const res = await detectRepositoryFramework('fake_token', 'user', 'multi-app');
+
+    expect(res.supported).toBe(true);
+    expect(res.projectRoot).toBe('client'); // prioritized over 'other'
+
+    fetchSpy.mockRestore();
+  });
 });

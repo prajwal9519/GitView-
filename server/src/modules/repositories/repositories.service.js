@@ -10,8 +10,42 @@ import {
   detectLanguage,
   isBinaryFile,
 } from '../../integrations/githubClient.js';
+import { detectRepositoryFramework } from '../preview/detectorAdapter.js';
 
 const MAX_FILE_SIZE = 512 * 1024; // 512 KB
+
+/**
+ * Resolves the appropriate GitHub token for an operation on a repository.
+ * Precedence:
+ * 1. User's connected OAuth account decrypted token
+ * 2. If repository is private: strictly reject if no user OAuth account
+ * 3. Configured server-side GITHUB_TOKEN (system token) for public repositories
+ * 4. Anonymous access (null)
+ */
+async function resolveTokenForRepository(userId, isPrivate) {
+  const oauth = await prisma.oAuthAccount.findUnique({
+    where: {
+      userId_provider: {
+        userId,
+        provider: 'GITHUB',
+      },
+    },
+  });
+
+  if (oauth) {
+    return decryptToken(oauth.accessTokenEnc);
+  }
+
+  if (isPrivate) {
+    throw new BadRequestError('GITHUB_NOT_CONNECTED', 'No connected GitHub account found. Please connect your GitHub account.');
+  }
+
+  if (process.env.GITHUB_TOKEN) {
+    return process.env.GITHUB_TOKEN;
+  }
+
+  return null;
+}
 
 /**
  * Imports a public GitHub repository for the authenticated user.
@@ -28,7 +62,8 @@ export async function importRepository(userId, repoInput) {
       },
     },
   });
-  const token = oauth ? decryptToken(oauth.accessTokenEnc) : null;
+  const userToken = oauth ? decryptToken(oauth.accessTokenEnc) : null;
+  const token = userToken || process.env.GITHUB_TOKEN || null;
 
   // Fetch repository metadata from GitHub
   const githubData = await fetchRepository(token, owner, repo);
@@ -146,21 +181,8 @@ export async function getDirectoryTree(userId, repositoryId, { path = '', ref } 
 
   const cleanPath = validatePath(path);
 
-  // Retrieve user's decrypted GitHub token
-  const oauth = await prisma.oAuthAccount.findUnique({
-    where: {
-      userId_provider: {
-        userId,
-        provider: 'GITHUB',
-      },
-    },
-  });
-
-  if (!oauth) {
-    throw new BadRequestError('GITHUB_NOT_CONNECTED', 'No connected GitHub account found. Please connect your GitHub account.');
-  }
-
-  const token = decryptToken(oauth.accessTokenEnc);
+  // Resolve token respecting user OAuth precedence, private-repo restriction, and system token fallback
+  const token = await resolveTokenForRepository(userId, repository.isPrivate);
   const gitRef = ref || repository.defaultBranch || 'main';
 
   const data = await fetchContents(token, repository.owner, repository.name, cleanPath, gitRef);
@@ -213,21 +235,8 @@ export async function getFileContent(userId, repositoryId, { path, ref } = {}) {
     throw new BadRequestError('INVALID_PATH', 'File path cannot be empty or root');
   }
 
-  // Retrieve user's decrypted GitHub token
-  const oauth = await prisma.oAuthAccount.findUnique({
-    where: {
-      userId_provider: {
-        userId,
-        provider: 'GITHUB',
-      },
-    },
-  });
-
-  if (!oauth) {
-    throw new BadRequestError('GITHUB_NOT_CONNECTED', 'No connected GitHub account found. Please connect your GitHub account.');
-  }
-
-  const token = decryptToken(oauth.accessTokenEnc);
+  // Resolve token respecting user OAuth precedence, private-repo restriction, and system token fallback
+  const token = await resolveTokenForRepository(userId, repository.isPrivate);
   const gitRef = ref || repository.defaultBranch || 'main';
 
   const data = await fetchContents(token, repository.owner, repository.name, cleanPath, gitRef);
@@ -280,4 +289,90 @@ export async function getFileContent(userId, repositoryId, { path, ref } = {}) {
     tooLarge: false,
     htmlUrl: data.html_url,
   };
+}
+
+/**
+ * Retrieves preview session history for the authenticated user.
+ */
+export async function getPreviewHistory(userId) {
+  const sessions = await prisma.previewSession.findMany({
+    where: { userId },
+    include: {
+      repository: {
+        select: {
+          id: true,
+          name: true,
+          fullName: true,
+          defaultBranch: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
+
+  return sessions.map((s) => {
+    let statusLabel = 'Ready';
+    let status = 'ready';
+    if (s.status === 'RUNNING') {
+      status = 'running';
+      statusLabel = 'Live Preview';
+    } else if (s.status === 'FAILED') {
+      status = 'failed';
+      statusLabel = s.errorCode || 'Failed';
+    } else if (s.status === 'STOPPED' || s.status === 'EXPIRED') {
+      status = 'terminated';
+      statusLabel = s.status === 'EXPIRED' ? 'Expired' : 'Terminated';
+    } else if (['PENDING', 'FETCHING', 'BUILDING', 'STARTING'].includes(s.status)) {
+      status = 'loading';
+      statusLabel = 'Starting...';
+    }
+
+    const timeDiffMs = Date.now() - new Date(s.lastActiveAt || s.createdAt).getTime();
+    let lastActive = 'Just now';
+    if (timeDiffMs > 86400000) {
+      const days = Math.floor(timeDiffMs / 86400000);
+      lastActive = `${days} day${days > 1 ? 's' : ''} ago`;
+    } else if (timeDiffMs > 3600000) {
+      const hours = Math.floor(timeDiffMs / 3600000);
+      lastActive = `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    } else if (timeDiffMs > 60000) {
+      const mins = Math.floor(timeDiffMs / 60000);
+      lastActive = `${mins} min${mins > 1 ? 's' : ''} ago`;
+    }
+
+    return {
+      id: s.id,
+      repoId: s.repositoryId,
+      repoFullName: s.repository?.fullName || 'Repository',
+      branch: s.branch || s.repository?.defaultBranch || 'main',
+      runtime: s.framework === 'UNKNOWN' ? 'Auto-detect' : s.framework,
+      lastActive,
+      status,
+      statusLabel,
+      actionText: s.status === 'RUNNING' ? 'Resume →' : 'Restart',
+      actionLink: `/workspace/${s.repositoryId}`,
+    };
+  });
+}
+
+/**
+ * Detects project framework and relative project root for an imported repository.
+ */
+export async function detectRepositoryProject(userId, repositoryId, ref = null) {
+  const repository = await prisma.repository.findFirst({
+    where: {
+      id: repositoryId,
+      userId,
+    },
+  });
+
+  if (!repository) {
+    throw new NotFoundError('Repository not found');
+  }
+
+  const token = await resolveTokenForRepository(userId, repository.isPrivate);
+  const gitRef = ref || repository.latestCommitSha || repository.defaultBranch || 'main';
+
+  return detectRepositoryFramework(token, repository.owner, repository.name, gitRef);
 }

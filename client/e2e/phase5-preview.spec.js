@@ -11,6 +11,29 @@ test.describe.serial('GitView Phase 5: Live Preview & End-to-End Hardening E2E S
     // 1. Prepare E2E user in database
     credentials = await setupE2EUser();
 
+    // 1b. Ensure a fixture repository exists for the user
+    const { prisma } = await import('../../server/src/lib/prisma.js');
+    await prisma.repository.upsert({
+      where: {
+        userId_githubRepoId: {
+          userId: credentials.user.id,
+          githubRepoId: '900001',
+        },
+      },
+      update: {},
+      create: {
+        userId: credentials.user.id,
+        githubRepoId: '900001',
+        owner: 'gitview-fixtures',
+        name: 'static-site',
+        fullName: 'gitview-fixtures/static-site',
+        htmlUrl: 'https://github.com/gitview-fixtures/static-site',
+        defaultBranch: 'main',
+        latestCommitSha: '0123456789abcdef0123456789abcdef01234567',
+        primaryLanguage: 'HTML',
+      },
+    });
+
     // 2. Create browser context
     context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
@@ -63,8 +86,8 @@ test.describe.serial('GitView Phase 5: Live Preview & End-to-End Hardening E2E S
     await page.goto('/workspace');
     await page.waitForLoadState('networkidle');
 
-    // Click "Preview: Launch" badge in the toolbar to toggle open the preview panel
-    const previewBadge = page.locator('text=Preview: Launch');
+    // Click preview badge in the toolbar to toggle open the preview panel
+    const previewBadge = page.locator('text=/Preview: (Launch|Idle)/');
     await expect(previewBadge).toBeVisible({ timeout: 10000 });
     await previewBadge.click();
 

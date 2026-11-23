@@ -50,6 +50,7 @@ export async function createPreviewSession(
     commitSha,
     branch,
     framework = FrameworkType.UNKNOWN,
+    projectRoot = null,
   },
   client = defaultPrisma
 ) {
@@ -74,6 +75,7 @@ export async function createPreviewSession(
         commitSha,
         branch,
         framework,
+        projectRoot: projectRoot || null,
         status: PreviewStatus.PENDING,
         isActive: true,
         tokenHash,
@@ -361,6 +363,7 @@ export function sanitizeSessionForClient(session) {
     repositoryId: session.repositoryId,
     status: session.status,
     framework: session.framework,
+    projectRoot: session.projectRoot || '',
     isActive: session.isActive,
     commitSha: session.commitSha,
     branch: session.branch,

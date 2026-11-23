@@ -27,6 +27,7 @@ describe('Phase 4: Repository Explorer & Code Viewer', () => {
     name = 'react',
     fullName = 'facebook/react',
     defaultBranch = 'main',
+    isPrivate = false,
   } = {}) {
     return prisma.repository.create({
       data: {
@@ -39,6 +40,7 @@ describe('Phase 4: Repository Explorer & Code Viewer', () => {
         defaultBranch,
         latestCommitSha: 'commit_sha_abc123',
         primaryLanguage: 'JavaScript',
+        isPrivate,
       },
     });
   }
@@ -341,19 +343,153 @@ describe('Phase 4: Repository Explorer & Code Viewer', () => {
     });
   });
 
-  describe('12: Missing GitHub Connection', () => {
-    it('12. returns 400 GITHUB_NOT_CONNECTED if user does not have a linked GitHub account', async () => {
+  describe('12: Public & Private Repository Access & Token Strategies', () => {
+    it('12a. allows email/password user to browse public repository without GitHub OAuth', async () => {
       const { res: regRes, accessToken } = await registerAndGetTokens();
       const userId = regRes.body.data.user.id;
-      // Do NOT link GitHub account
-      const repo = await createTestRepository(userId);
+      // No linked GitHub account
+      const repo = await createTestRepository(userId, { isPrivate: false });
+
+      const mockEntries = [
+        { name: 'README.md', path: 'README.md', type: 'file', size: 500, sha: 'sha1' },
+      ];
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, opts) => {
+        // Assert no Authorization header sent when no token configured
+        expect(opts?.headers?.Authorization).toBeUndefined();
+        return new Response(JSON.stringify(mockEntries), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      });
 
       const res = await api()
         .get(`/api/v1/repositories/${repo.id}/tree`)
         .set('Cookie', cookieHeader({ access_token: accessToken }));
 
-      expect(res.status).toBe(400);
-      expect(res.body.error?.code).toBe('GITHUB_NOT_CONNECTED');
+      expect(res.status).toBe(200);
+      expect(res.body.data.entries).toHaveLength(1);
+    });
+
+    it('12b. allows email/password user to read a file from public repository without GitHub OAuth', async () => {
+      const { res: regRes, accessToken } = await registerAndGetTokens();
+      const userId = regRes.body.data.user.id;
+      const repo = await createTestRepository(userId, { isPrivate: false });
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        return new Response(JSON.stringify({
+          name: 'README.md',
+          path: 'README.md',
+          size: 14,
+          content: Buffer.from('# Hello Public').toString('base64'),
+          encoding: 'base64',
+          sha: 'sha_readme',
+          html_url: 'https://github.com/facebook/react/blob/main/README.md',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      });
+
+      const res = await api()
+        .get(`/api/v1/repositories/${repo.id}/file?path=README.md`)
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.content).toBe('# Hello Public');
+    });
+
+    it('12c. uses configured system GITHUB_TOKEN when user has no OAuth account', async () => {
+      const originalEnvToken = process.env.GITHUB_TOKEN;
+      process.env.GITHUB_TOKEN = 'ghp_system_fallback_token_12345';
+
+      try {
+        const { res: regRes, accessToken } = await registerAndGetTokens();
+        const userId = regRes.body.data.user.id;
+        const repo = await createTestRepository(userId, { isPrivate: false });
+
+        let sentAuthHeader = null;
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, opts) => {
+          sentAuthHeader = opts?.headers?.Authorization;
+          return new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        });
+
+        const res = await api()
+          .get(`/api/v1/repositories/${repo.id}/tree`)
+          .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+        expect(res.status).toBe(200);
+        expect(sentAuthHeader).toBe('Bearer ghp_system_fallback_token_12345');
+      } finally {
+        if (originalEnvToken !== undefined) {
+          process.env.GITHUB_TOKEN = originalEnvToken;
+        } else {
+          delete process.env.GITHUB_TOKEN;
+        }
+      }
+    });
+
+    it('12d. prioritizes user OAuth token over system token', async () => {
+      const originalEnvToken = process.env.GITHUB_TOKEN;
+      process.env.GITHUB_TOKEN = 'ghp_system_token_to_be_overridden';
+
+      try {
+        const { res: regRes, accessToken } = await registerAndGetTokens();
+        const userId = regRes.body.data.user.id;
+        await linkGitHubAccount(userId, { token: 'gho_user_personal_oauth_token' });
+        const repo = await createTestRepository(userId, { isPrivate: false });
+
+        let sentAuthHeader = null;
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, opts) => {
+          sentAuthHeader = opts?.headers?.Authorization;
+          return new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        });
+
+        const res = await api()
+          .get(`/api/v1/repositories/${repo.id}/tree`)
+          .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+        expect(res.status).toBe(200);
+        expect(sentAuthHeader).toBe('Bearer gho_user_personal_oauth_token');
+      } finally {
+        if (originalEnvToken !== undefined) {
+          process.env.GITHUB_TOKEN = originalEnvToken;
+        } else {
+          delete process.env.GITHUB_TOKEN;
+        }
+      }
+    });
+
+    it('12e. rejects private repository access with 400 GITHUB_NOT_CONNECTED if user has no OAuth account', async () => {
+      const originalEnvToken = process.env.GITHUB_TOKEN;
+      process.env.GITHUB_TOKEN = 'ghp_system_token_must_not_bypass';
+
+      try {
+        const { res: regRes, accessToken } = await registerAndGetTokens();
+        const userId = regRes.body.data.user.id;
+        // Repository marked as private
+        const repo = await createTestRepository(userId, { isPrivate: true });
+
+        const res = await api()
+          .get(`/api/v1/repositories/${repo.id}/tree`)
+          .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+        // System token must NOT bypass private repo check
+        expect(res.status).toBe(400);
+        expect(res.body.error?.code).toBe('GITHUB_NOT_CONNECTED');
+      } finally {
+        if (originalEnvToken !== undefined) {
+          process.env.GITHUB_TOKEN = originalEnvToken;
+        } else {
+          delete process.env.GITHUB_TOKEN;
+        }
+      }
     });
   });
 

@@ -130,6 +130,7 @@ model PreviewSession {
   repositoryId      String
   status            PreviewStatus @default(PENDING)
   framework         FrameworkType @default(UNKNOWN)
+  projectRoot       String?       // Normalized relative path to nested app root (e.g. "vite-project")
   isActive          Boolean       @default(true)
   tokenHash         String        @unique // SHA-256 of preview token for O(1) indexed lookup
   previewTokenEnc   String        // AES-256-GCM encrypted token for reconstruction on workspace refresh

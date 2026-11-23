@@ -3,6 +3,7 @@ import child_process from 'node:child_process';
 import {
   detectFramework,
   mapDetectorResultToPrismaFramework,
+  normalizeProjectRoot,
   DetectionReasonCode,
   MAX_PACKAGE_JSON_SIZE_BYTES,
 } from '../src/modules/preview/detector.js';
@@ -411,5 +412,39 @@ describe('Passive Project Detection Engine (Milestone 4)', () => {
     expect(res.supported).toBe(false);
     expect(res.reasonCode).toBe(DetectionReasonCode.BUNDLER_UNSUPPORTED);
     expect(res.message).toMatch(/webpack/);
+  });
+
+  // Test 22: Preserves and normalizes projectRoot for nested applications
+  it('22. Preserves and normalizes projectRoot for nested applications', () => {
+    const pkg = {
+      name: 'nested-vite-app',
+      dependencies: { react: '^19.0.0' },
+      devDependencies: { vite: '^5.4.14' },
+    };
+
+    const res = detectFramework({
+      rootFiles: ['index.html', 'package.json', 'package-lock.json'],
+      packageJsonRaw: JSON.stringify(pkg),
+      projectRoot: 'vite-project',
+    });
+
+    expect(res.supported).toBe(true);
+    expect(res.framework).toBe('VITE_FRONTEND');
+    expect(res.variant).toBe('REACT');
+    expect(res.projectRoot).toBe('vite-project');
+  });
+
+  // Test 23: Path traversal rejection in normalizeProjectRoot
+  it('23. Path traversal rejection in normalizeProjectRoot', () => {
+    expect(normalizeProjectRoot('')).toBe('');
+    expect(normalizeProjectRoot(null)).toBe('');
+    expect(normalizeProjectRoot('.')).toBe('');
+    expect(normalizeProjectRoot('client')).toBe('client');
+    expect(normalizeProjectRoot('apps/web')).toBe('apps/web');
+
+    expect(() => normalizeProjectRoot('/absolute')).toThrowError(/path traversal or absolute path/);
+    expect(() => normalizeProjectRoot('../outside')).toThrowError(/path traversal or absolute path/);
+    expect(() => normalizeProjectRoot('a/../../b')).toThrowError(/path traversal or absolute path/);
+    expect(() => normalizeProjectRoot('%2e%2e/test')).toThrowError(/path traversal or absolute path/);
   });
 });

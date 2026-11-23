@@ -4,6 +4,7 @@ import {
   PreviewStatus,
   PreviewFramework,
 } from '../../services/previewService';
+import { repoService } from '../../services/repoService';
 
 /**
  * GitView Phase 5 — Milestone 7, Task 6: Production Live Preview Component
@@ -25,6 +26,7 @@ export const LivePreview = ({
   width = 480,
   onClose,
   initialSession = null,
+  onStatusChange = null,
 }) => {
   // Session lifecycle state
   const [session, setSession] = useState(initialSession);
@@ -33,10 +35,38 @@ export const LivePreview = ({
   const [isIframeLoading, setIsIframeLoading] = useState(false);
   const [viewportMode, setViewportMode] = useState('desktop'); // 'desktop' | 'mobile'
 
+  // Notify parent of status & port updates safely without re-triggering loops
+  const onStatusChangeRef = useRef(onStatusChange);
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+  }, [onStatusChange]);
+
+  useEffect(() => {
+    onStatusChangeRef.current?.({ status, port: session?.proxyPort || null });
+  }, [status, session?.proxyPort]);
+
   // Error & conflict state
   const [errorInfo, setErrorInfo] = useState(null);
   const [conflictSessionId, setConflictSessionId] = useState(null);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
+  const [detectedFramework, setDetectedFramework] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    if (repositoryId) {
+      repoService
+        .detectRepository(repositoryId)
+        .then((data) => {
+          if (mounted && data?.supported) {
+            setDetectedFramework(data);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [repositoryId]);
 
   // Time remaining
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState(null);
@@ -404,12 +434,13 @@ export const LivePreview = ({
           </div>
 
           {/* Framework Badge */}
-          {session?.framework && session.framework !== PreviewFramework.UNKNOWN && (
+          {(session?.framework || detectedFramework?.framework) && (
             <span
               data-testid="framework-badge"
               className="hidden sm:inline-flex px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-blue-950/80 text-blue-400 border border-blue-500/30"
             >
-              {session.framework}
+              {session?.framework || (detectedFramework?.variant ? `Vite ${detectedFramework.variant === 'REACT' ? 'React' : detectedFramework.variant}` : detectedFramework?.framework)}
+              {detectedFramework?.projectRoot ? ` (${detectedFramework.projectRoot})` : ''}
             </span>
           )}
         </div>
@@ -531,16 +562,43 @@ export const LivePreview = ({
 
             {/* Supported Frameworks List */}
             <div className="flex flex-wrap items-center justify-center gap-1.5 mt-4">
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-border-subtle text-slate-300">
-                HTML / CSS / JS (Static)
+              <span
+                data-testid="framework-chip-static"
+                className={`px-2 py-0.5 rounded text-[10px] font-mono border ${
+                  detectedFramework?.framework === 'STATIC'
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-300 font-semibold shadow-sm'
+                    : 'bg-slate-900 border-border-subtle text-slate-300'
+                }`}
+              >
+                HTML / CSS / JS (Static) {detectedFramework?.framework === 'STATIC' ? '✓' : ''}
               </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-border-subtle text-slate-300">
-                Vite Vanilla
+              <span
+                data-testid="framework-chip-vanilla"
+                className={`px-2 py-0.5 rounded text-[10px] font-mono border ${
+                  detectedFramework?.framework === 'VITE_FRONTEND' && detectedFramework?.variant === 'VANILLA'
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-300 font-semibold shadow-sm'
+                    : 'bg-slate-900 border-border-subtle text-slate-300'
+                }`}
+              >
+                Vite Vanilla {detectedFramework?.variant === 'VANILLA' ? '✓' : ''}
               </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-border-subtle text-slate-300">
-                Vite React + JSX
+              <span
+                data-testid="detected-framework-chip"
+                className={`px-2 py-0.5 rounded text-[10px] font-mono border ${
+                  detectedFramework?.framework === 'VITE_FRONTEND' && detectedFramework?.variant === 'REACT'
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-300 font-semibold shadow-sm'
+                    : 'bg-slate-900 border-border-subtle text-slate-300'
+                }`}
+              >
+                Vite React + JSX {detectedFramework?.variant === 'REACT' ? '✓' : ''}
               </span>
             </div>
+
+            {detectedFramework?.projectRoot && (
+              <div className="mt-2 text-[11px] font-mono text-slate-400">
+                Detected App Root: <span className="text-blue-300 bg-slate-900 px-1.5 py-0.5 rounded border border-border-subtle">{detectedFramework.projectRoot}</span>
+              </div>
+            )}
 
             {/* Run Preview CTA */}
             <button

@@ -5,7 +5,7 @@ import { mockRepositories } from '../data/mockRepositories';
 const WorkspaceContext = createContext(null);
 
 export const WorkspaceProvider = ({ children }) => {
-  const [currentRepo, setCurrentRepo] = useState(mockRepositories[0]);
+  const [currentRepo, setCurrentRepo] = useState(null);
   const [currentBranch, setCurrentBranch] = useState('main');
   const [openTabs, setOpenTabs] = useState([]);
   const [activeTab, setActiveTab] = useState('');
@@ -27,7 +27,8 @@ export const WorkspaceProvider = ({ children }) => {
   const [expandedFolders, setExpandedFolders] = useState(new Set(['']));
 
   const [mainViewMode, setMainViewMode] = useState('code'); // 'code' | 'readme' | 'deps'
-  const [previewState, setPreviewState] = useState('running'); // 'running' | 'loading' | 'failed'
+  const [previewState, setPreviewState] = useState('idle'); // 'idle' | 'starting' | 'running' | 'stopping' | 'failed' | 'expired'
+  const [previewPort, setPreviewPort] = useState(null);
   const [previewDevice, setPreviewDevice] = useState('desktop'); // 'desktop' | 'mobile'
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState([
@@ -58,28 +59,7 @@ export const WorkspaceProvider = ({ children }) => {
         [dirPath]: data.entries || [],
       }));
     } catch (err) {
-      // Fallback for mock repositories
-      if (currentRepo.id === 'shadcn-ui-ui' || !currentRepo.githubRepoId) {
-        setTreeCache((prev) => ({
-          ...prev,
-          '': [
-            { name: 'apps', path: 'apps', type: 'dir', size: 0, sha: '1' },
-            { name: 'packages', path: 'packages', type: 'dir', size: 0, sha: '2' },
-            { name: 'package.json', path: 'package.json', type: 'file', size: 1200, sha: '3' },
-            { name: 'README.md', path: 'README.md', type: 'file', size: 3400, sha: '4' },
-            { name: 'tsconfig.json', path: 'tsconfig.json', type: 'file', size: 600, sha: '5' }
-          ],
-          'apps': [
-            { name: 'www', path: 'apps/www', type: 'dir', size: 0, sha: '6' }
-          ],
-          'apps/www': [
-            { name: 'button.tsx', path: 'apps/www/button.tsx', type: 'file', size: 850, sha: '7' },
-            { name: 'dialog.tsx', path: 'apps/www/dialog.tsx', type: 'file', size: 920, sha: '8' }
-          ]
-        }));
-      } else {
-        setTreeError(err.message || 'Failed to load directory tree');
-      }
+      setTreeError(err.message || 'Failed to load directory tree');
     } finally {
       setLoadingTree(false);
     }
@@ -227,6 +207,14 @@ export const WorkspaceProvider = ({ children }) => {
     else setPreviewState('running');
   };
 
+  const updatePreviewState = useCallback((val) => {
+    setPreviewState((prev) => (prev === val ? prev : val));
+  }, []);
+
+  const updatePreviewPort = useCallback((val) => {
+    setPreviewPort((prev) => (prev === val ? prev : val));
+  }, []);
+
   return (
     <WorkspaceContext.Provider
       value={{
@@ -257,7 +245,9 @@ export const WorkspaceProvider = ({ children }) => {
         mainViewMode,
         setMainViewMode,
         previewState,
-        setPreviewState,
+        setPreviewState: updatePreviewState,
+        previewPort,
+        setPreviewPort: updatePreviewPort,
         previewDevice,
         setPreviewDevice,
         isPreviewOpen,

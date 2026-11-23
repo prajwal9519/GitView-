@@ -10,7 +10,7 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
     mainViewMode,
     setMainViewMode,
     previewState,
-    cyclePreviewState,
+    previewPort,
     triggerSandboxRefresh,
     isPreviewOpen,
     setIsPreviewOpen,
@@ -33,24 +33,46 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
   };
 
   const getStatusPillClasses = () => {
-    if (previewState === 'loading') {
+    const s = (previewState || 'idle').toLowerCase();
+    if (['starting', 'pending', 'fetching', 'building'].includes(s)) {
       return {
         bg: 'bg-amber-950/70 border-amber-500/40 text-amber-400',
         dot: 'bg-amber-400 animate-pulse',
-        text: 'Preview: Booting...'
+        text: 'Preview: Booting...',
       };
     }
-    if (previewState === 'failed') {
+    if (s === 'running') {
+      return {
+        bg: 'bg-emerald-950/70 border-emerald-500/40 text-emerald-400',
+        dot: 'bg-emerald-400 animate-pulse',
+        text: previewPort ? `Preview: Running (${previewPort})` : 'Preview: Running',
+      };
+    }
+    if (s === 'stopping') {
+      return {
+        bg: 'bg-amber-950/70 border-amber-500/40 text-amber-400',
+        dot: 'bg-amber-400',
+        text: 'Preview: Stopping...',
+      };
+    }
+    if (s === 'failed') {
       return {
         bg: 'bg-red-950/70 border-red-500/40 text-red-400',
         dot: 'bg-red-400',
-        text: 'Preview: Failed (exit 1)'
+        text: 'Preview: Failed',
+      };
+    }
+    if (s === 'expired') {
+      return {
+        bg: 'bg-slate-800 border-slate-700 text-slate-400',
+        dot: 'bg-slate-400',
+        text: 'Preview: Expired',
       };
     }
     return {
-      bg: 'bg-emerald-950/70 border-emerald-500/40 text-emerald-400',
-      dot: 'bg-emerald-400 animate-pulse',
-      text: `Preview: Running (${currentRepo.port || 3000})`
+      bg: 'bg-blue-950/70 border-blue-500/40 text-blue-300',
+      dot: 'bg-blue-400',
+      text: 'Preview: Idle',
     };
   };
 
@@ -75,19 +97,19 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
         {/* Repo Identifier */}
         <div className="flex items-center gap-2 text-xs font-mono">
           <a
-            href={`https://github.com/${currentRepo.owner}`}
+            href={currentRepo?.owner ? `https://github.com/${currentRepo.owner}` : '#'}
             target="_blank"
             rel="noreferrer"
             className="text-slate-400 hover:text-white transition-colors"
           >
-            {currentRepo.owner}
+            {currentRepo?.owner || 'Repository'}
           </a>
           <span className="text-slate-600">/</span>
           <Link
-            to={`/repo/${currentRepo.id}`}
+            to={currentRepo?.id ? `/repo/${currentRepo.id}` : '#'}
             className="text-white font-semibold hover:text-blue-400 transition-colors flex items-center gap-1"
           >
-            <span>{currentRepo.name}</span>
+            <span>{currentRepo?.name || 'Workspace'}</span>
             <span className="material-symbols-outlined text-[13px] text-slate-500">open_in_new</span>
           </Link>
 
@@ -110,7 +132,7 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
                 <div className="px-3 py-1.5 text-[10px] text-slate-500 uppercase tracking-wider border-b border-border-subtle">
                   Switch Branch or Tag
                 </div>
-                {currentRepo.branches?.map((branch) => (
+                {(currentRepo?.branches || [currentBranch]).map((branch) => (
                   <button
                     key={branch}
                     onClick={() => {
@@ -126,7 +148,7 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
                       {branch}
                     </span>
                     <span className="text-[10px] text-slate-500">
-                      {branch === currentRepo.defaultBranch ? 'HEAD' : 'branch'}
+                      {branch === (currentRepo?.defaultBranch || 'main') ? 'HEAD' : 'branch'}
                     </span>
                   </button>
                 ))}
@@ -136,7 +158,7 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
 
           <span className="hidden lg:inline-flex items-center gap-1 text-[11px] text-slate-500 font-mono ml-1">
             <span className="material-symbols-outlined text-[14px]">commit</span>
-            <span>{(currentRepo.latestCommitSha || currentRepo.latestCommit || 'HEAD').slice(0, 7)}</span>
+            <span>{(currentRepo?.latestCommitSha || currentRepo?.latestCommit || 'HEAD').slice(0, 7)}</span>
           </span>
         </div>
       </div>
@@ -202,22 +224,14 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
           <span>⌘K</span>
         </button>
 
-        {/* Interactive Preview Trigger Badge */}
+        {/* Interactive Real Preview Status Pill */}
         <div
           onClick={() => setIsPreviewOpen(!isPreviewOpen)}
           title="Toggle Live Preview Panel"
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border cursor-pointer hover:opacity-90 transition-colors ${
-            isPreviewOpen
-              ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-400'
-              : 'bg-blue-950/70 border-blue-500/40 text-blue-300'
-          }`}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border cursor-pointer hover:opacity-90 transition-colors ${status.bg}`}
         >
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              isPreviewOpen ? 'bg-emerald-400 animate-pulse' : 'bg-blue-400'
-            }`}
-          ></span>
-          <span>{isPreviewOpen ? 'Preview: Active' : 'Preview: Launch'}</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
+          <span>{status.text}</span>
         </div>
 
         {/* Hot Reload Sandbox Button */}

@@ -27,6 +27,9 @@ const schema = z
     GITHUB_CLIENT_SECRET: z.string().optional().default(''),
     GITHUB_CALLBACK_URL: z.string().default('http://localhost:3000/api/v1/auth/github/callback'),
 
+    // Optional server-side GitHub Personal Access Token for rate-limit resilience on public repos
+    GITHUB_TOKEN: z.string().optional().default(''),
+
     // AES-256-GCM encryption key for GitHub access tokens (32 bytes / 64 hex characters)
     ENCRYPTION_KEY: z
       .string()

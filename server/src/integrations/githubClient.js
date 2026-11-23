@@ -57,8 +57,19 @@ async function githubFetch(url, options = {}, token = null) {
 
     if (res.status === 403 || res.status === 429) {
       const rateLimitRemaining = res.headers.get('x-ratelimit-remaining');
+      const rateLimitReset = res.headers.get('x-ratelimit-reset');
       if (rateLimitRemaining === '0' || res.status === 429) {
-        throw new AppError(429, 'GITHUB_RATE_LIMITED', 'GitHub API rate limit exceeded. Please try again later.');
+        let resetMsg = '';
+        if (rateLimitReset) {
+          const resetSeconds = parseInt(rateLimitReset, 10);
+          if (!isNaN(resetSeconds)) {
+            const resetDate = new Date(resetSeconds * 1000);
+            resetMsg = ` Quota resets at ${resetDate.toISOString()}.`;
+          }
+        }
+        const err = new AppError(429, 'GITHUB_RATE_LIMITED', `GitHub API rate limit exceeded.${resetMsg}`);
+        err.rateLimitReset = rateLimitReset ? parseInt(rateLimitReset, 10) : null;
+        throw err;
       }
       throw new AppError(403, 'FORBIDDEN', 'Access to this GitHub resource is forbidden.');
     }
@@ -235,10 +246,18 @@ export async function fetchRepository(githubToken, owner, repo) {
   return await githubFetch(url, { method: 'GET' }, githubToken);
 }
 
+// In-memory cache for GitHub repository tree and file contents (60s TTL)
+const contentsCache = new Map();
+const CONTENTS_CACHE_TTL_MS = 60_000;
+
+export function clearGitHubContentsCache() {
+  contentsCache.clear();
+}
+
 /**
  * Fetches directory or file contents from GitHub Contents API.
  */
-export async function fetchContents(githubToken, owner, repo, path = '', ref = null) {
+export async function fetchContents(githubToken, owner, repo, path = '', ref = null, { bypassCache = false } = {}) {
   const cleanPath = validatePath(path);
   if (owner === 'gitview-fixtures') {
     const fs = await import('node:fs');
@@ -270,6 +289,17 @@ export async function fetchContents(githubToken, owner, repo, path = '', ref = n
       }
     }
   }
+
+  const shouldCache = !bypassCache && process.env.NODE_ENV !== 'test';
+  const cacheKey = `${owner}/${repo}:${ref || 'HEAD'}:${cleanPath}`;
+  if (shouldCache && contentsCache.has(cacheKey)) {
+    const cached = contentsCache.get(cacheKey);
+    if (cached.expiresAt > Date.now()) {
+      return JSON.parse(JSON.stringify(cached.data));
+    }
+    contentsCache.delete(cacheKey);
+  }
+
   let url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents`;
   if (cleanPath) {
     const encodedSegments = cleanPath.split('/').map(encodeURIComponent).join('/');
@@ -278,7 +308,23 @@ export async function fetchContents(githubToken, owner, repo, path = '', ref = n
   if (ref) {
     url += `?ref=${encodeURIComponent(ref)}`;
   }
-  return await githubFetch(url, { method: 'GET' }, githubToken);
+
+  const result = await githubFetch(url, { method: 'GET' }, githubToken);
+
+  if (shouldCache && result) {
+    if (contentsCache.size > 1000) {
+      const now = Date.now();
+      for (const [k, v] of contentsCache.entries()) {
+        if (v.expiresAt <= now) contentsCache.delete(k);
+      }
+    }
+    contentsCache.set(cacheKey, {
+      data: result,
+      expiresAt: Date.now() + CONTENTS_CACHE_TTL_MS,
+    });
+  }
+
+  return result;
 }
 
 /**

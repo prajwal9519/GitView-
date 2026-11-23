@@ -112,7 +112,7 @@ export const CONTAINER_PROFILES = Object.freeze({
     portPolicy: Object.freeze({
       allowPublishing: false,
     }),
-    allowedEnv: Object.freeze(['NODE_ENV', 'PORT']),
+    allowedEnv: Object.freeze(['NODE_ENV', 'PORT', 'WORKSPACE_DIR', 'PROJECT_ROOT']),
     command: Object.freeze(['node', '/usr/local/bin/gitview-serve.js', '--port', '3000', '--root', '/workspace']),
   }),
 
@@ -147,7 +147,7 @@ export const CONTAINER_PROFILES = Object.freeze({
     portPolicy: Object.freeze({
       allowPublishing: false,
     }),
-    allowedEnv: Object.freeze(['NODE_ENV', 'PORT']),
+    allowedEnv: Object.freeze(['NODE_ENV', 'PORT', 'WORKSPACE_DIR', 'PROJECT_ROOT']),
     command: Object.freeze([
       '/workspace/node_modules/.bin/vite',
       '--host',
@@ -709,6 +709,36 @@ export class DockerAdapter {
 
   // --- Container Management (Governed by Profiles) ---
 
+  validateProjectRoot(projectRoot) {
+    if (projectRoot === null || projectRoot === undefined || projectRoot === '') {
+      return '';
+    }
+    if (typeof projectRoot !== 'string') {
+      throw new DockerAdapterError(DockerErrorCode.DOCKER_INVALID_ARGUMENT, 'projectRoot must be a string');
+    }
+    const trimmed = projectRoot.trim().replace(/\\/g, '/');
+    if (!trimmed || trimmed === '.') return '';
+
+    if (trimmed.startsWith('/') || trimmed.includes('\0') || trimmed.includes('..') || /%2e/i.test(trimmed)) {
+      throw new DockerAdapterError(
+        DockerErrorCode.DOCKER_SECURITY_POLICY_VIOLATION,
+        `Invalid or unsafe projectRoot '${projectRoot}': path traversal or absolute path detected`
+      );
+    }
+
+    const clean = trimmed.replace(/^\/+|\/+$/g, '');
+    if (!clean || clean === '.') return '';
+
+    if (!/^[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*$/.test(clean)) {
+      throw new DockerAdapterError(
+        DockerErrorCode.DOCKER_SECURITY_POLICY_VIOLATION,
+        `Invalid characters in projectRoot '${projectRoot}'`
+      );
+    }
+
+    return clean;
+  }
+
   /**
    * Spawns a container governed strictly by its approved ContainerProfile.
    * Rejects caller-controlled arbitrary commands or unapproved environment variables.
@@ -726,9 +756,11 @@ export class DockerAdapter {
     portMapping = null,
     env = null,
     command = null,
+    projectRoot = null,
   }) {
     this.validateSessionId(sessionId);
     this.validateProfile(profile);
+    const cleanProjectRoot = this.validateProjectRoot(projectRoot);
 
     const spec = CONTAINER_PROFILES[profile];
 
@@ -784,8 +816,10 @@ export class DockerAdapter {
       args.push('--user', spec.user);
     }
 
-    // Apply workdir if specified by profile
-    if (spec.workdir) {
+    // Apply workdir if specified by profile or customized by projectRoot
+    if (profile === ContainerProfile.VITE_RUNNER && cleanProjectRoot) {
+      args.push('--workdir', `/workspace/${cleanProjectRoot}`);
+    } else if (spec.workdir) {
       args.push('--workdir', spec.workdir);
     }
 
@@ -909,8 +943,32 @@ export class DockerAdapter {
     // Immutable image
     args.push(spec.image);
 
-    // Fixed command defined by profile
-    for (const cmdItem of spec.command) {
+    // Fixed command defined by profile (adapted safely for validated projectRoot)
+    let profileCommand = spec.command;
+    if (cleanProjectRoot) {
+      if (profile === ContainerProfile.VITE_RUNNER) {
+        profileCommand = [
+          `/workspace/${cleanProjectRoot}/node_modules/.bin/vite`,
+          '--host',
+          '0.0.0.0',
+          '--port',
+          '3000',
+          '--strictPort',
+          `/workspace/${cleanProjectRoot}`,
+        ];
+      } else if (profile === ContainerProfile.STATIC_RUNNER) {
+        profileCommand = [
+          'node',
+          '/usr/local/bin/gitview-serve.js',
+          '--port',
+          '3000',
+          '--root',
+          `/workspace/${cleanProjectRoot}`,
+        ];
+      }
+    }
+
+    for (const cmdItem of profileCommand) {
       args.push(cmdItem);
     }
 

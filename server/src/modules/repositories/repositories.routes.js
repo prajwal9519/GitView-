@@ -22,6 +22,7 @@ router.post(
   repoController.importRepository
 );
 
+router.get('/history', repoController.getPreviewHistory);
 router.get('/', repoController.listRepositories);
 
 router.get(
@@ -46,6 +47,12 @@ router.get(
   '/:id/file',
   validate({ params: repositoryIdParamSchema, query: getFileContentQuerySchema }),
   repoController.getFileContent
+);
+
+router.get(
+  '/:id/detect',
+  validate({ params: repositoryIdParamSchema }),
+  repoController.detectRepository
 );
 
 export default router;

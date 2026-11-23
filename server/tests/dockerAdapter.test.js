@@ -276,6 +276,71 @@ describe('DockerAdapter Security Hardening & Unit Tests', () => {
       ).rejects.toThrowError(/Arbitrary command execution is forbidden/);
     });
 
+    it('rejects path traversal and absolute paths in projectRoot', async () => {
+      const mockSpawn = createMockSpawn();
+      mockSpawn.onArgs(
+        (args) => args[0] === 'network' && args[1] === 'inspect',
+        { exitCode: 0, stdout: JSON.stringify([{ Internal: true }]) }
+      );
+      const adapter = new DockerAdapter({ spawnFn: mockSpawn });
+
+      await expect(
+        adapter.createAndStartContainer({
+          profile: ContainerProfile.VITE_RUNNER,
+          sessionId: VALID_UUID,
+          networkName: `gitview-net-${VALID_UUID}`,
+          volumeMount: {
+            volumeName: `gitview-ws-${VALID_UUID}`,
+            mountPath: '/workspace',
+            readOnly: false,
+          },
+          projectRoot: '../outside',
+        })
+      ).rejects.toThrowError(/path traversal or absolute path detected/);
+
+      await expect(
+        adapter.createAndStartContainer({
+          profile: ContainerProfile.STATIC_RUNNER,
+          sessionId: VALID_UUID,
+          networkName: `gitview-net-${VALID_UUID}`,
+          volumeMount: {
+            volumeName: `gitview-ws-${VALID_UUID}`,
+            mountPath: '/workspace',
+            readOnly: true,
+          },
+          projectRoot: '/etc/passwd',
+        })
+      ).rejects.toThrowError(/path traversal or absolute path detected/);
+    });
+
+    it('adapts command and workdir safely for nested projectRoot', async () => {
+      const mockSpawn = createMockSpawn({ exitCode: 0, stdout: 'c-nested-123' });
+      mockSpawn.onArgs(
+        (args) => args[0] === 'network' && args[1] === 'inspect',
+        { exitCode: 0, stdout: JSON.stringify([{ Internal: true }]) }
+      );
+      const adapter = new DockerAdapter({ spawnFn: mockSpawn });
+
+      await adapter.createAndStartContainer({
+        profile: ContainerProfile.VITE_RUNNER,
+        sessionId: VALID_UUID,
+        networkName: `gitview-net-${VALID_UUID}`,
+        volumeMount: {
+          volumeName: `gitview-ws-${VALID_UUID}`,
+          mountPath: '/workspace',
+          readOnly: false,
+        },
+        projectRoot: 'vite-project',
+      });
+
+      const runCall = mockSpawn.calls.find((c) => c.args[0] === 'run');
+      expect(runCall).toBeDefined();
+      expect(runCall.args).toContain('--workdir');
+      expect(runCall.args).toContain('/workspace/vite-project');
+      expect(runCall.args).toContain('/workspace/vite-project/node_modules/.bin/vite');
+      expect(runCall.args).toContain('/workspace/vite-project');
+    });
+
     it('rejects arbitrary environment variables not in profile allowlist', async () => {
       const mockSpawn = createMockSpawn();
       mockSpawn.onArgs(

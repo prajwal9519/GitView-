@@ -154,4 +154,58 @@ describe('Frontend Explorer & Code Viewer Service Tests', () => {
       });
     });
   });
+
+  describe('getRepositoryById & getHistorySessions', () => {
+    it('returns repository by ID from API', async () => {
+      vi.spyOn(api, 'get').mockResolvedValue({
+        data: {
+          data: {
+            repository: { id: 'repo-1', name: 'Sample-App' },
+          },
+        },
+      });
+
+      const repo = await repoService.getRepositoryById('repo-1');
+      expect(repo).toEqual({ id: 'repo-1', name: 'Sample-App' });
+    });
+
+    it('returns null when repository is not found and not a mock ID', async () => {
+      vi.spyOn(api, 'get').mockRejectedValue(new Error('404 Not Found'));
+
+      const repo = await repoService.getRepositoryById('non-existent-uuid');
+      expect(repo).toBeNull();
+    });
+
+    it('fetches history sessions from /repositories/history', async () => {
+      const mockHistory = [
+        { id: 'sess-1', repoFullName: 'dzsodzso63/Sample-React-App-with-Vite', status: 'running' },
+      ];
+      vi.spyOn(api, 'get').mockResolvedValue({
+        data: {
+          data: mockHistory,
+        },
+      });
+
+      const sessions = await repoService.getHistorySessions();
+      expect(sessions).toEqual(mockHistory);
+    });
+
+    it('calls GET /repositories/:id/detect and returns detection profile including projectRoot', async () => {
+      const mockDetection = {
+        supported: true,
+        framework: 'VITE_FRONTEND',
+        variant: 'REACT',
+        projectRoot: 'vite-project',
+      };
+      vi.spyOn(api, 'get').mockResolvedValue({
+        data: {
+          data: mockDetection,
+        },
+      });
+
+      const res = await repoService.detectRepository('repo-skynav', 'main');
+      expect(res).toEqual(mockDetection);
+      expect(res.projectRoot).toBe('vite-project');
+    });
+  });
 });

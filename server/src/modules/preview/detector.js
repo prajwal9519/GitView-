@@ -25,6 +25,7 @@ export const DetectionReasonCode = Object.freeze({
   LOCKFILE_REQUIRED: 'LOCKFILE_REQUIRED',
   LOCKFILE_UNSUPPORTED: 'LOCKFILE_UNSUPPORTED',
   UNSUPPORTED_PROJECT_STRUCTURE: 'UNSUPPORTED_PROJECT_STRUCTURE',
+  MULTIPLE_PROJECT_ROOTS: 'MULTIPLE_PROJECT_ROOTS',
   INVALID_METADATA: 'INVALID_METADATA',
 });
 
@@ -52,6 +53,28 @@ const UNSUPPORTED_BUNDLERS = new Set([
   'parcel',
   '@parcel/core',
 ]);
+
+/**
+ * Normalizes and validates a relative project root path against path traversal.
+ *
+ * @param {string|null} rootPath
+ * @returns {string} Clean relative path, e.g. "vite-project" or "" for root
+ */
+export function normalizeProjectRoot(rootPath) {
+  if (!rootPath || typeof rootPath !== 'string') return '';
+  const trimmed = rootPath.trim().replace(/\\/g, '/');
+  if (!trimmed || trimmed === '.') return '';
+  if (trimmed.startsWith('/') || trimmed.includes('\0') || trimmed.includes('..') || /%2e/i.test(trimmed)) {
+    throw new Error('Invalid project root path: path traversal or absolute path detected');
+  }
+  const clean = trimmed.replace(/^\/+|\/+$/g, '');
+  if (!clean || clean === '.') return '';
+  const segments = clean.split('/').filter(Boolean);
+  if (segments.some((s) => s === '..' || s === '.' || /%2e/i.test(s))) {
+    throw new Error('Invalid project root path: path traversal detected');
+  }
+  return clean;
+}
 
 /**
  * Normalizes rootFiles input to a Set of lowercase filenames.
@@ -94,7 +117,9 @@ export function detectFramework({
   rootFiles = [],
   packageJsonRaw = null,
   packageJsonSize = null,
+  projectRoot = '',
 } = {}) {
+  const cleanProjectRoot = normalizeProjectRoot(projectRoot);
   // 1. Validate metadata structures
   if (!Array.isArray(rootFiles)) {
     return {
@@ -156,6 +181,7 @@ export function detectFramework({
       framework: 'STATIC',
       variant: 'STATIC_HTML',
       entryPoint: 'index.html',
+      projectRoot: cleanProjectRoot,
     };
   }
 
@@ -354,6 +380,7 @@ export function detectFramework({
       framework: 'STATIC',
       variant: 'STATIC_HTML',
       entryPoint: 'index.html',
+      projectRoot: cleanProjectRoot,
     };
   }
 
@@ -391,6 +418,7 @@ export function detectFramework({
     variant: isReact ? 'REACT' : 'VANILLA',
     entryPoint: 'index.html',
     packageManager: 'NPM',
+    projectRoot: cleanProjectRoot,
   };
 }
 

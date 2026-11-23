@@ -527,4 +527,101 @@ describe('Phase 3: GitHub Repository Management', () => {
       expect(res.body.error?.code).toBe('GITHUB_UPSTREAM_ERROR');
     });
   });
+
+  describe('Phase 6 History Endpoint: GET /api/v1/repositories/history', () => {
+    it('returns empty array when user has no preview history', async () => {
+      const { accessToken } = await registerAndGetTokens();
+
+      const res = await api()
+        .get('/api/v1/repositories/history')
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual([]);
+    });
+
+    it('returns user preview sessions formatted for dashboard history', async () => {
+      const { res: regRes, accessToken } = await registerAndGetTokens();
+      const userId = regRes.body.data.user.id;
+
+      const repo = await prisma.repository.create({
+        data: {
+          userId,
+          githubRepoId: '987654',
+          owner: 'testowner',
+          name: 'testrepo',
+          fullName: 'testowner/testrepo',
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/testowner/testrepo',
+        },
+      });
+
+      await prisma.previewSession.create({
+        data: {
+          userId,
+          repositoryId: repo.id,
+          status: 'RUNNING',
+          framework: 'VITE_REACT',
+          isActive: true,
+          tokenHash: 'dummy_hash_1',
+          previewTokenEnc: 'dummy_enc_1',
+          commitSha: '0123456789abcdef0123456789abcdef01234567',
+          branch: 'main',
+          expiresAt: new Date(Date.now() + 3600000),
+        },
+      });
+
+      const res = await api()
+        .get('/api/v1/repositories/history')
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data[0].repoFullName).toBe('testowner/testrepo');
+      expect(res.body.data[0].status).toBe('running');
+      expect(res.body.data[0].statusLabel).toBe('Live Preview');
+      expect(res.body.data[0].actionLink).toBe(`/workspace/${repo.id}`);
+    });
+
+    it('requires authentication and rejects unauthenticated requests with 401', async () => {
+      const res = await api().get('/api/v1/repositories/history');
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe('GET /api/v1/repositories/:id/detect', () => {
+    it('detects framework and project root for repository', async () => {
+      const { res: regRes, accessToken } = await registerAndGetTokens();
+      const userId = regRes.body.data.user.id;
+
+      const repo = await prisma.repository.create({
+        data: {
+          userId,
+          githubRepoId: '55443322',
+          owner: 'gitview-fixtures',
+          name: 'vite-react',
+          fullName: 'gitview-fixtures/vite-react',
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/gitview-fixtures/vite-react',
+        },
+      });
+
+      const res = await api()
+        .get(`/api/v1/repositories/${repo.id}/detect`)
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toBeDefined();
+      expect(res.body.data.supported).toBe(true);
+    });
+
+    it('returns 404 if repository does not exist', async () => {
+      const { accessToken } = await registerAndGetTokens();
+      const res = await api()
+        .get('/api/v1/repositories/non-existent-uuid/detect')
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(404);
+    });
+  });
 });

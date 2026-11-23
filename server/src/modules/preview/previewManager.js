@@ -16,6 +16,7 @@
  */
 
 import crypto from 'node:crypto';
+import path from 'node:path';
 import http from 'node:http';
 import { prisma as defaultPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../utils/AppError.js';
@@ -150,7 +151,7 @@ export class PreviewManager {
    *
    * @private
    */
-  async _resolveCommitSha({ githubToken, owner, repo, commitRef, branch, defaultBranch = 'main' }) {
+  async _resolveCommitSha({ githubToken, owner, repo, commitRef, branch, defaultBranch = 'main', existingSha = null }) {
     if (commitRef && isValidCommitSha(commitRef)) {
       return {
         resolvedSha: commitRef.toLowerCase(),
@@ -164,6 +165,14 @@ export class PreviewManager {
       return {
         resolvedSha: '0123456789abcdef0123456789abcdef01234567',
         targetBranch: targetRef,
+      };
+    }
+
+    // Avoid redundant GitHub round-trip if repository has pinned latestCommitSha for default branch
+    if (!commitRef && (!branch || branch === defaultBranch) && existingSha && isValidCommitSha(existingSha)) {
+      return {
+        resolvedSha: existingSha.toLowerCase(),
+        targetBranch: defaultBranch,
       };
     }
 
@@ -225,7 +234,7 @@ export class PreviewManager {
       throw new AppError(404, 'REPOSITORY_NOT_FOUND', 'Repository not found or access denied');
     }
 
-    // 3. Retrieve user's GitHub OAuth token internally
+    // 3. Retrieve user's GitHub OAuth token internally, or system token fallback for public repos
     const oauth = await this.prisma.oAuthAccount.findUnique({
       where: {
         userId_provider: {
@@ -234,7 +243,10 @@ export class PreviewManager {
         },
       },
     });
-    const githubToken = oauth?.accessTokenEnc ? decryptToken(oauth.accessTokenEnc) : null;
+    let githubToken = oauth?.accessTokenEnc ? decryptToken(oauth.accessTokenEnc) : null;
+    if (!githubToken && !repo.isPrivate && process.env.GITHUB_TOKEN) {
+      githubToken = process.env.GITHUB_TOKEN;
+    }
 
     // 4. Resolve exact 40-character commit SHA server-side
     const { resolvedSha, targetBranch } = await this._resolveCommitSha({
@@ -244,6 +256,7 @@ export class PreviewManager {
       commitRef,
       branch,
       defaultBranch: repo.defaultBranch || 'main',
+      existingSha: repo.latestCommitSha,
     });
 
     // 5. Create atomic PreviewSession record in PENDING status
@@ -306,10 +319,15 @@ export class PreviewManager {
         throw new AppError(400, 'UNSUPPORTED_FRAMEWORK', `Detected framework '${detection.framework}' is not supported`);
       }
 
-      // Record detected framework in database
+      const detectedProjectRoot = detection.projectRoot ? String(detection.projectRoot).trim() : '';
+
+      // Record detected framework and project root in database
       await this.prisma.previewSession.update({
         where: { id: sessionId },
-        data: { framework: targetFramework },
+        data: {
+          framework: targetFramework,
+          projectRoot: detectedProjectRoot || null,
+        },
       });
 
       // 8. Create session workspace volume and internal preview network
@@ -372,6 +390,7 @@ export class PreviewManager {
             NODE_ENV: 'production',
             PORT: '3000',
           },
+          projectRoot: detectedProjectRoot,
         });
 
         // Start Option A TRUSTED_PROXY sidecar container
@@ -453,10 +472,13 @@ export class PreviewManager {
       }
 
       // 10B. VITE Workflow (VITE_VANILLA and VITE_REACT)
-      // Read package-lock.json from workspace volume
+      // Read package-lock.json from workspace volume (at project root if nested)
+      const lockfilePath = detectedProjectRoot
+        ? path.posix.join(detectedProjectRoot, 'package-lock.json')
+        : 'package-lock.json';
       const lockContent = await this.docker.readVolumeFile({
         volumeName: volName,
-        filePath: 'package-lock.json',
+        filePath: lockfilePath,
         sessionId,
       });
 
@@ -529,6 +551,17 @@ export class PreviewManager {
 
       // Start NPM_BUILDER connected strictly to internal build network
       const builderName = `gitview-builder-${sessionId}`;
+      const builderEnv = {
+        HTTP_PROXY: `http://${buildProxyName}:3128`,
+        HTTPS_PROXY: `http://${buildProxyName}:3128`,
+        npm_config_proxy: `http://${buildProxyName}:3128`,
+        npm_config_https_proxy: `http://${buildProxyName}:3128`,
+        NODE_ENV: 'development',
+      };
+      if (detectedProjectRoot) {
+        builderEnv.WORKSPACE_DIR = `/workspace/${detectedProjectRoot}`;
+      }
+
       await this.docker.createAndStartContainer({
         profile: ContainerProfile.NPM_BUILDER,
         sessionId,
@@ -539,13 +572,8 @@ export class PreviewManager {
           mountPath: '/workspace',
           readOnly: false,
         },
-        env: {
-          HTTP_PROXY: `http://${buildProxyName}:3128`,
-          HTTPS_PROXY: `http://${buildProxyName}:3128`,
-          npm_config_proxy: `http://${buildProxyName}:3128`,
-          npm_config_https_proxy: `http://${buildProxyName}:3128`,
-          NODE_ENV: 'development',
-        },
+        env: builderEnv,
+        projectRoot: detectedProjectRoot,
       });
 
       // Wait for builder to complete within 90 seconds
@@ -556,6 +584,12 @@ export class PreviewManager {
       });
 
       if (buildResult.exitCode !== 0) {
+        let buildLogs = '';
+        try {
+          const logs = await this.docker.getContainerLogs({ containerName: builderName, tail: 100 });
+          buildLogs = (logs.stderr || '') + '\n' + (logs.stdout || '');
+          console.error(`[NPM_BUILDER FAILED LOGS]:\n${buildLogs}`);
+        } catch {}
         throw new AppError(
           400,
           buildResult.oomKilled ? 'BUILD_OOM_KILLED' : 'BUILD_FAILED',
@@ -564,9 +598,12 @@ export class PreviewManager {
       }
 
       // Confirm local Vite executable was created in the volume
+      const viteExecutablePath = detectedProjectRoot
+        ? path.posix.join(detectedProjectRoot, 'node_modules/.bin/vite')
+        : 'node_modules/.bin/vite';
       const hasViteExecutable = await this.docker.verifyVolumeExecutable({
         volumeName: volName,
-        filePath: 'node_modules/.bin/vite',
+        filePath: viteExecutablePath,
         sessionId,
       });
 
@@ -574,7 +611,7 @@ export class PreviewManager {
         throw new AppError(
           500,
           'MISSING_VITE_EXECUTABLE',
-          'Local Vite executable /workspace/node_modules/.bin/vite was not created during installation'
+          `Local Vite executable /workspace/${viteExecutablePath} was not created during installation`
         );
       }
 
@@ -610,6 +647,7 @@ export class PreviewManager {
           NODE_ENV: 'development',
           PORT: '3000',
         },
+        projectRoot: detectedProjectRoot,
       });
 
       // Start Option A TRUSTED_PROXY sidecar container

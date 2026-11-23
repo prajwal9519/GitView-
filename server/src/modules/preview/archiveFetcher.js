@@ -235,14 +235,16 @@ export async function fetchRepositoryArchiveStream({
   }, timeoutMs);
 
   try {
+    const effectiveToken = githubToken || process.env.GITHUB_TOKEN || null;
+
     while (hops <= MAX_REDIRECT_HOPS) {
       const parsedUrl = new URL(currentUrl);
       const isApiGithub = parsedUrl.hostname.toLowerCase() === 'api.github.com';
-      const sendAuth = isApiGithub && Boolean(githubToken);
+      const sendAuth = isApiGithub && Boolean(effectiveToken);
 
       res = await fetchFn(currentUrl, {
         method: 'GET',
-        headers: buildHeaders(githubToken, sendAuth),
+        headers: buildHeaders(effectiveToken, sendAuth),
         redirect: 'manual',
         signal: controller.signal,
       });

@@ -56,3 +56,22 @@ export async function getFileContent(req, res, next) {
     next(err);
   }
 }
+
+export async function getPreviewHistory(req, res, next) {
+  try {
+    const history = await repoService.getPreviewHistory(req.user.id);
+    res.json({ data: history });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function detectRepository(req, res, next) {
+  try {
+    const { ref } = req.query;
+    const detection = await repoService.detectRepositoryProject(req.user.id, req.params.id, ref);
+    res.json({ data: detection });
+  } catch (err) {
+    next(err);
+  }
+}
