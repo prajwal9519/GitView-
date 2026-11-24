@@ -1,6 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { decryptToken } from '../../utils/encryption.js';
-import { BadRequestError, ConflictError, NotFoundError } from '../../utils/AppError.js';
+import { AppError, BadRequestError, ConflictError, NotFoundError } from '../../utils/AppError.js';
 import {
   parseGitHubRepoIdentifier,
   fetchRepository,
@@ -375,4 +375,178 @@ export async function detectRepositoryProject(userId, repositoryId, ref = null) 
   const gitRef = ref || repository.latestCommitSha || repository.defaultBranch || 'main';
 
   return detectRepositoryFramework(token, repository.owner, repository.name, gitRef);
+}
+
+/**
+ * Inspects and returns parsed package dependencies and manifest metadata for an imported repository.
+ * Detects application project roots (including nested directories) and handles static repositories
+ * without package.json manifests gracefully without reporting them as server errors.
+ *
+ * @param {string} userId Authenticated user ID
+ * @param {string} repositoryId Imported repository UUID
+ * @param {string|null} [ref] Target branch or commit ref
+ * @returns {Promise<Object>} Dependency inspection profile
+ */
+export async function getRepositoryDependencies(userId, repositoryId, ref = null) {
+  const repository = await prisma.repository.findFirst({
+    where: {
+      id: repositoryId,
+      userId,
+    },
+  });
+
+  if (!repository) {
+    throw new NotFoundError('Repository not found');
+  }
+
+  const token = await resolveTokenForRepository(userId, repository.isPrivate);
+  const gitRef = ref || repository.defaultBranch || 'main';
+
+  // 1. Detect project framework and application root (including nested project roots like 'vite-project')
+  const detection = await detectRepositoryFramework(token, repository.owner, repository.name, gitRef);
+  const projectRoot = detection.projectRoot || '';
+  const targetPath = projectRoot ? `${projectRoot}/package.json` : 'package.json';
+
+  // 2. If framework detection explicitly established there is no package.json in a static site
+  if (detection.supported && detection.framework === 'STATIC' && detection.hasPackageJson === false) {
+    return {
+      hasManifest: false,
+      manifestPath: null,
+      projectRoot,
+      framework: 'STATIC',
+      packageMetadata: null,
+      dependencies: [],
+      devDependencies: [],
+      peerDependencies: [],
+      optionalDependencies: [],
+      totalCount: 0,
+      message: 'No package.json manifest found. This repository does not declare npm dependencies.',
+    };
+  }
+
+  // 3. Attempt to fetch package.json at the detected project root
+  let fileData = null;
+  try {
+    fileData = await fetchContents(token, repository.owner, repository.name, targetPath, gitRef);
+  } catch (err) {
+    if (err.statusCode === 404 || err.name === 'NotFoundError' || err.message?.includes('not found')) {
+      return {
+        hasManifest: false,
+        manifestPath: null,
+        projectRoot,
+        framework: detection.framework || 'STATIC',
+        packageMetadata: null,
+        dependencies: [],
+        devDependencies: [],
+        peerDependencies: [],
+        optionalDependencies: [],
+        totalCount: 0,
+        message: `No package.json manifest found at '${targetPath}'. This repository does not declare npm dependencies.`,
+      };
+    }
+    // Upstream errors (rate limits 429, unauthorized 401, forbidden 403, network) are rethrown cleanly
+    throw err;
+  }
+
+  if (!fileData || Array.isArray(fileData) || fileData.type === 'dir') {
+    return {
+      hasManifest: false,
+      manifestPath: null,
+      projectRoot,
+      framework: detection.framework || 'STATIC',
+      packageMetadata: null,
+      dependencies: [],
+      devDependencies: [],
+      peerDependencies: [],
+      optionalDependencies: [],
+      totalCount: 0,
+      message: 'No package.json manifest found. This repository does not declare npm dependencies.',
+    };
+  }
+
+  // 4. Decode content
+  let rawJson = '';
+  if (fileData.content && fileData.encoding === 'base64') {
+    rawJson = Buffer.from(fileData.content, 'base64').toString('utf8');
+  } else if (typeof fileData.content === 'string') {
+    rawJson = fileData.content;
+  } else if (typeof fileData === 'string') {
+    rawJson = fileData;
+  }
+
+  if (!rawJson.trim()) {
+    return {
+      hasManifest: false,
+      manifestPath: targetPath,
+      projectRoot,
+      framework: detection.framework || 'STATIC',
+      packageMetadata: null,
+      dependencies: [],
+      devDependencies: [],
+      peerDependencies: [],
+      optionalDependencies: [],
+      totalCount: 0,
+      message: 'package.json manifest is empty.',
+    };
+  }
+
+  // 5. Parse JSON and validate format
+  let parsed = null;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (parseErr) {
+    throw new AppError(
+      422,
+      'MALFORMED_MANIFEST',
+      `Failed to parse package.json: Invalid JSON syntax (${parseErr.message})`,
+      { manifestPath: targetPath }
+    );
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new AppError(
+      422,
+      'MALFORMED_MANIFEST',
+      'Failed to parse package.json: Root manifest must be a JSON object.',
+      { manifestPath: targetPath }
+    );
+  }
+
+  // 6. Format dependencies into sorted structured arrays
+  const formatDeps = (depsObj, type) => {
+    if (!depsObj || typeof depsObj !== 'object' || Array.isArray(depsObj)) return [];
+    return Object.entries(depsObj)
+      .map(([name, version]) => ({
+        name,
+        version: String(version ?? ''),
+        type,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const dependencies = formatDeps(parsed.dependencies, 'production');
+  const devDependencies = formatDeps(parsed.devDependencies, 'development');
+  const peerDependencies = formatDeps(parsed.peerDependencies, 'peer');
+  const optionalDependencies = formatDeps(parsed.optionalDependencies, 'optional');
+
+  const totalCount = dependencies.length + devDependencies.length + peerDependencies.length + optionalDependencies.length;
+
+  return {
+    hasManifest: true,
+    manifestPath: targetPath,
+    projectRoot,
+    framework: detection.framework || 'UNKNOWN',
+    packageMetadata: {
+      name: parsed.name || repository.name,
+      version: parsed.version || '0.0.0',
+      description: parsed.description || null,
+      license: parsed.license || 'Unspecified',
+    },
+    dependencies,
+    devDependencies,
+    peerDependencies,
+    optionalDependencies,
+    totalCount,
+    message: null,
+  };
 }

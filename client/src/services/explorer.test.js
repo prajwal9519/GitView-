@@ -207,5 +207,77 @@ describe('Frontend Explorer & Code Viewer Service Tests', () => {
       expect(res).toEqual(mockDetection);
       expect(res.projectRoot).toBe('vite-project');
     });
+
+    it('calls GET /repositories/:id/dependencies and returns parsed dependencies profile', async () => {
+      const mockDeps = {
+        hasManifest: true,
+        manifestPath: 'package.json',
+        projectRoot: '',
+        framework: 'VITE_FRONTEND',
+        packageMetadata: { name: 'vite-app', version: '1.0.0' },
+        dependencies: [{ name: 'react', version: '^19.0.0', type: 'production' }],
+        devDependencies: [{ name: 'vite', version: '^6.0.0', type: 'development' }],
+        peerDependencies: [],
+        optionalDependencies: [],
+        totalCount: 2,
+      };
+      const getSpy = vi.spyOn(api, 'get').mockResolvedValue({
+        data: {
+          data: mockDeps,
+        },
+      });
+
+      const res = await repoService.getRepositoryDependencies('repo-uuid-1', 'main');
+      expect(getSpy).toHaveBeenCalledWith('/repositories/repo-uuid-1/dependencies', {
+        params: { ref: 'main' },
+      });
+      expect(res.hasManifest).toBe(true);
+      expect(res.totalCount).toBe(2);
+      expect(res.dependencies[0].name).toBe('react');
+    });
+
+    it('handles static repositories with hasManifest: false cleanly without throwing', async () => {
+      const mockStaticProfile = {
+        hasManifest: false,
+        manifestPath: null,
+        projectRoot: '',
+        framework: 'STATIC',
+        packageMetadata: null,
+        dependencies: [],
+        devDependencies: [],
+        peerDependencies: [],
+        optionalDependencies: [],
+        totalCount: 0,
+        message: 'No package.json manifest found.',
+      };
+      vi.spyOn(api, 'get').mockResolvedValue({
+        data: {
+          data: mockStaticProfile,
+        },
+      });
+
+      const res = await repoService.getRepositoryDependencies('static-repo-id');
+      expect(res.hasManifest).toBe(false);
+      expect(res.totalCount).toBe(0);
+      expect(res.dependencies).toEqual([]);
+    });
+
+    it('formats and propagates errors on dependencies API failure', async () => {
+      vi.spyOn(api, 'get').mockRejectedValue({
+        response: {
+          status: 422,
+          data: {
+            error: {
+              code: 'MALFORMED_MANIFEST',
+              message: 'Failed to parse package.json: Invalid JSON syntax',
+            },
+          },
+        },
+      });
+
+      await expect(repoService.getRepositoryDependencies('repo-broken')).rejects.toMatchObject({
+        code: 'MALFORMED_MANIFEST',
+      });
+    });
   });
 });

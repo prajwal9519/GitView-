@@ -75,3 +75,13 @@ export async function detectRepository(req, res, next) {
     next(err);
   }
 }
+
+export async function getRepositoryDependencies(req, res, next) {
+  try {
+    const { ref } = req.query;
+    const dependencies = await repoService.getRepositoryDependencies(req.user.id, req.params.id, ref);
+    res.json({ data: dependencies });
+  } catch (err) {
+    next(err);
+  }
+}

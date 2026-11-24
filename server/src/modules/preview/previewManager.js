@@ -53,9 +53,17 @@ import {
   ContainerProfile,
   DockerErrorCode,
 } from './dockerAdapter.js';
-import { getTicketStore, validateSessionExpiresAtMs } from './ticketStore.js';
+import {
+  getTicketStore,
+  validateSessionExpiresAtMs,
+  invalidateSessionTickets,
+} from './ticketStore.js';
 import { getPreviewTargetOrigin, canonicalizeHostAuthority } from './hostAuthority.js';
-import { createSidecarHandshakeToken } from './previewGateway.js';
+import {
+  createSidecarHandshakeToken,
+  invalidateSessionGatewayCache,
+} from './previewGateway.js';
+import { terminateSessionWebSockets } from './previewWebSocket.js';
 
 /**
  * Verifies that the parsed lockfile contains the necessary dependencies for the detected framework.
@@ -220,10 +228,39 @@ export class PreviewManager {
     // 1. Verify user does not already have an active preview session (concurrency ceiling)
     const existingActive = await getActiveSessionForUser(userId, this.prisma);
     if (existingActive) {
-      throw new ActiveSessionConflictError(
-        userId,
-        'You already have an active live preview session. Only one concurrent preview is permitted.'
-      );
+      // Self-healing: if existing session is already past hard TTL, expire it immediately and proceed
+      if (existingActive.expiresAt && new Date() >= new Date(existingActive.expiresAt)) {
+        await this.docker.cleanupSession(existingActive.id).catch(() => {});
+        await invalidateSessionTickets(existingActive.id).catch(() => {});
+        await terminateSessionWebSockets(existingActive.id).catch(() => {});
+        try {
+          await expireSession(existingActive.id, existingActive.status, 'TTL_EXPIRED', this.prisma);
+        } catch {
+          // If concurrent expiration occurred, proceed
+        }
+      } else {
+        let activeRepo = null;
+        try {
+          activeRepo = await this.prisma.repository.findUnique({
+            where: { id: existingActive.repositoryId },
+            select: { id: true, name: true, owner: true, fullName: true },
+          });
+        } catch {}
+
+        throw new ActiveSessionConflictError(
+          userId,
+          `You already have an active live preview session running for '${activeRepo?.name || 'another repository'}'.`,
+          {
+            activeSessionId: existingActive.id,
+            repositoryId: existingActive.repositoryId,
+            repositoryName: activeRepo?.name || activeRepo?.fullName || 'Active Repository',
+            repositoryOwner: activeRepo?.owner || null,
+            status: existingActive.status,
+            startedAt: existingActive.startedAt,
+            expiresAt: existingActive.expiresAt,
+          }
+        );
+      }
     }
 
     // 2. Validate repository ownership
@@ -954,31 +991,98 @@ export class PreviewManager {
       throw new SessionNotFoundError(sessionId);
     }
 
-    // If session is already in terminal status, return immediately
+    // If session is already in terminal status, ensure cleanup is finalized and return immediately
     if (!session.isActive) {
+      await invalidateSessionTickets(sessionId).catch(() => {});
+      await terminateSessionWebSockets(sessionId).catch(() => {});
+      await this.docker.cleanupSession(sessionId).catch(() => {});
+      invalidateSessionGatewayCache(sessionId);
       return sanitizeSessionForClient(session);
     }
 
-    // Abort active in-flight operation if one is running
+    // 1. Abort active in-flight operation if one is running
     const activeOp = this._activeOperations.get(sessionId);
     if (activeOp) {
       activeOp.abort();
     }
 
-    // Teardown Docker resources idempotently
+    // 2. Invalidate unused preview bootstrap tickets in Redis / Memory
+    await invalidateSessionTickets(sessionId).catch(() => {});
+
+    // 3. Terminate WebSocket connection leases across gateway instances
+    await terminateSessionWebSockets(sessionId).catch(() => {});
+
+    // 4. Invalidate gateway cache
+    invalidateSessionGatewayCache(sessionId);
+
+    // 5. Teardown Docker containers, networks, and volumes idempotently
     await this.docker.cleanupSession(sessionId).catch(() => {});
 
+    // 6. Transition session state machine to STOPPED
     let updatedSession;
-    if (session.status === PreviewStatus.PENDING) {
-      updatedSession = await cancelSession(sessionId, PreviewStatus.PENDING, this.prisma);
-    } else if (session.status === PreviewStatus.STOPPING) {
-      updatedSession = await transitionSession(sessionId, PreviewStatus.STOPPING, PreviewStatus.STOPPED, {}, this.prisma);
-    } else {
-      await cancelSession(sessionId, session.status, this.prisma);
-      updatedSession = await transitionSession(sessionId, PreviewStatus.STOPPING, PreviewStatus.STOPPED, {}, this.prisma);
+    try {
+      if (session.status === PreviewStatus.PENDING) {
+        updatedSession = await cancelSession(sessionId, PreviewStatus.PENDING, this.prisma);
+      } else if (session.status === PreviewStatus.STOPPING) {
+        updatedSession = await transitionSession(sessionId, PreviewStatus.STOPPING, PreviewStatus.STOPPED, {}, this.prisma);
+      } else {
+        await cancelSession(sessionId, session.status, this.prisma);
+        updatedSession = await transitionSession(sessionId, PreviewStatus.STOPPING, PreviewStatus.STOPPED, {}, this.prisma);
+      }
+    } catch {
+      // If a concurrent stop request or cancellation already transitioned the session, fetch the latest state
+      const latest = await this.prisma.previewSession.findFirst({
+        where: { id: sessionId, userId },
+      });
+      if (latest && (!latest.isActive || latest.status === PreviewStatus.STOPPED)) {
+        updatedSession = latest;
+      } else {
+        throw new AppError(500, 'SESSION_STOP_FAILED', `Failed to transition session '${sessionId}' to STOPPED`);
+      }
     }
 
     return sanitizeSessionForClient(updatedSession);
+  }
+
+  /**
+   * Retrieves active preview session and repository details for a user.
+   *
+   * @param {string} userId
+   * @returns {Promise<{ session: Object, repository: Object }|null>}
+   */
+  async getActivePreviewForUser(userId) {
+    if (!userId) {
+      throw new AppError(400, 'INVALID_ARGUMENT', 'userId is required');
+    }
+
+    const session = await getActiveSessionForUser(userId, this.prisma);
+    if (!session) {
+      return null;
+    }
+
+    // Self-healing check: if expired past hard TTL, expire it cleanly and report null
+    if (session.expiresAt && new Date() >= new Date(session.expiresAt)) {
+      await this.docker.cleanupSession(session.id).catch(() => {});
+      await invalidateSessionTickets(session.id).catch(() => {});
+      await terminateSessionWebSockets(session.id).catch(() => {});
+      try {
+        await expireSession(session.id, session.status, 'TTL_EXPIRED', this.prisma);
+      } catch {}
+      return null;
+    }
+
+    let repo = null;
+    try {
+      repo = await this.prisma.repository.findUnique({
+        where: { id: session.repositoryId },
+        select: { id: true, name: true, owner: true, fullName: true },
+      });
+    } catch {}
+
+    return {
+      session: sanitizeSessionForClient(session),
+      repository: repo || { id: session.repositoryId, name: 'Repository', fullName: 'Repository' },
+    };
   }
 
   /**
@@ -1116,6 +1220,8 @@ export class PreviewManager {
         try {
           handledSessionIds.add(s.id);
           await this.docker.cleanupSession(s.id);
+          await invalidateSessionTickets(s.id).catch(() => {});
+          await terminateSessionWebSockets(s.id).catch(() => {});
           await expireSession(s.id, s.status, 'TTL_EXPIRED', this.prisma);
           expiredCount++;
         } catch {
@@ -1147,6 +1253,8 @@ export class PreviewManager {
           try {
             handledSessionIds.add(s.id);
             await this.docker.cleanupSession(s.id);
+            await invalidateSessionTickets(s.id).catch(() => {});
+            await terminateSessionWebSockets(s.id).catch(() => {});
             await failSession(
               s.id,
               PreviewStatus.RUNNING,
@@ -1178,6 +1286,8 @@ export class PreviewManager {
 
           if (!activeDbSession) {
             await this.docker.cleanupSession(mId);
+            await invalidateSessionTickets(mId).catch(() => {});
+            await terminateSessionWebSockets(mId).catch(() => {});
             orphanedPrunedCount++;
           }
         } catch {

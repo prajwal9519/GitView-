@@ -17,3 +17,8 @@ export const getFileContentQuerySchema = z.object({
   path: z.string().trim().min(1, 'File path is required').max(500, 'Path must not exceed 500 characters'),
   ref: z.string().trim().max(100).optional(),
 });
+
+export const getDependenciesQuerySchema = z.object({
+  ref: z.string().trim().max(100).optional(),
+});
+

@@ -22,7 +22,8 @@ export const RepoDetailsPage = () => {
       sandboxService.getTelemetry(id)
     ]).then(([r, deps, telem]) => {
       setRepo(r);
-      setDependencies(deps);
+      const depList = Array.isArray(deps) ? deps : (deps?.dependencies || []);
+      setDependencies(depList);
       setTelemetry(telem);
     }).finally(() => {
       setLoading(false);
@@ -95,7 +96,7 @@ export const RepoDetailsPage = () => {
           <div className="p-4 rounded-xl bg-dark-surface-container border border-border-subtle">
             <span className="text-slate-500 block mb-1">TOTAL DEPENDENCIES</span>
             <span className="text-base font-bold text-white">
-              {repo.dependenciesCount || 18} direct / {repo.totalDependenciesCount || 142} total
+              {dependencies.length} direct declared
             </span>
             <span className="text-[11px] text-emerald-400 mt-1 block">
               {repo.vulnerabilitiesCount || 0} vulnerabilities found

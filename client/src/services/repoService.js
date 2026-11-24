@@ -105,12 +105,26 @@ export const repoService = {
   },
 
 
+  /**
+   * Fetches real parsed repository dependencies and manifest metadata from backend.
+   */
+  async getRepositoryDependencies(repoId, ref = null) {
+    try {
+      const res = await api.get(`/repositories/${encodeURIComponent(repoId)}/dependencies`, {
+        params: ref ? { ref } : {},
+      });
+      return res.data.data;
+    } catch (err) {
+      throw formatApiError(err);
+    }
+  },
+
   async getDependencies(repoFullName) {
     try {
       const res = await api.get(`/repositories/${encodeURIComponent(repoFullName)}/dependencies`);
-      return res.data;
+      return res.data.data || res.data;
     } catch {
-      return mockDependencies;
+      return null;
     }
   },
 

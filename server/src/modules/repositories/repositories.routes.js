@@ -7,6 +7,7 @@ import {
   repositoryIdParamSchema,
   getDirectoryTreeQuerySchema,
   getFileContentQuerySchema,
+  getDependenciesQuerySchema,
 } from './repositories.schemas.js';
 import * as repoController from './repositories.controller.js';
 
@@ -53,6 +54,12 @@ router.get(
   '/:id/detect',
   validate({ params: repositoryIdParamSchema }),
   repoController.detectRepository
+);
+
+router.get(
+  '/:id/dependencies',
+  validate({ params: repositoryIdParamSchema, query: getDependenciesQuerySchema }),
+  repoController.getRepositoryDependencies
 );
 
 export default router;

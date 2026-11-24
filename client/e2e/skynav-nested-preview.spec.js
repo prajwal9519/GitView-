@@ -6,8 +6,8 @@ import { prisma } from '../../server/src/lib/prisma.js';
 test.describe.serial('SkyNav Nested Project Root Live Acceptance Test', () => {
   let context;
   let page;
+  let repoId;
   const userId = '36aeb54a-7e81-4d07-ace1-330ce5c12794';
-  const repoId = 'e33a9104-e2f0-4cf5-b10c-ea0e0e63c9e2';
 
   test.beforeAll(async ({ browser }) => {
     // 1. Clean up any stale sessions or containers for this user
@@ -20,6 +20,11 @@ test.describe.serial('SkyNav Nested Project Root Live Acceptance Test', () => {
       where: { userId, isActive: true },
       data: { isActive: false, status: 'STOPPED' },
     });
+
+    const skynavRepo = await prisma.repository.findFirst({
+      where: { userId, fullName: { contains: 'SkyNav', mode: 'insensitive' } },
+    });
+    repoId = skynavRepo?.id || '7c544487-cb84-4a92-8d72-06486e2c709b';
 
     const token = signAccessToken({ id: userId, role: 'USER' });
 

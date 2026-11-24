@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { repoService } from '../services/repoService';
+import { previewService } from '../services/previewService';
 import { mockRepositories } from '../data/mockRepositories';
 
 const WorkspaceContext = createContext(null);
@@ -20,6 +21,12 @@ export const WorkspaceProvider = ({ children }) => {
   const [loadingReadme, setLoadingReadme] = useState(false);
   const [readmeError, setReadmeError] = useState(null);
 
+  // Dependencies inspection state
+  const [dependenciesData, setDependenciesData] = useState(null);
+  const [dependenciesCount, setDependenciesCount] = useState(null);
+  const [loadingDependencies, setLoadingDependencies] = useState(false);
+  const [dependenciesError, setDependenciesError] = useState(null);
+
   // Directory Tree state
   const [treeCache, setTreeCache] = useState({}); // { [dirPath]: entries[] }
   const [loadingTree, setLoadingTree] = useState(false);
@@ -29,6 +36,9 @@ export const WorkspaceProvider = ({ children }) => {
   const [mainViewMode, setMainViewMode] = useState('code'); // 'code' | 'readme' | 'deps'
   const [previewState, setPreviewState] = useState('idle'); // 'idle' | 'starting' | 'running' | 'stopping' | 'failed' | 'expired'
   const [previewPort, setPreviewPort] = useState(null);
+  const [previewSession, setPreviewSession] = useState(null);
+  const [previewStopError, setPreviewStopError] = useState(null);
+  const [stopTriggerTimestamp, setStopTriggerTimestamp] = useState(null);
   const [previewDevice, setPreviewDevice] = useState('desktop'); // 'desktop' | 'mobile'
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState([
@@ -65,7 +75,27 @@ export const WorkspaceProvider = ({ children }) => {
     }
   }, [currentRepo, currentBranch, treeCache]);
 
-  // Load root directory when repo changes
+  // Inspect repository dependencies and manifest
+  const fetchDependencies = useCallback(async (branchOverride = null) => {
+    if (!currentRepo?.id) return;
+    const targetBranch = branchOverride || currentBranch || currentRepo.defaultBranch || 'main';
+
+    setLoadingDependencies(true);
+    setDependenciesError(null);
+    try {
+      const data = await repoService.getRepositoryDependencies(currentRepo.id, targetBranch);
+      setDependenciesData(data);
+      setDependenciesCount(data?.hasManifest ? data.totalCount : 0);
+    } catch (err) {
+      setDependenciesError(err);
+      setDependenciesData(null);
+      setDependenciesCount(null);
+    } finally {
+      setLoadingDependencies(false);
+    }
+  }, [currentRepo?.id, currentRepo?.defaultBranch, currentBranch]);
+
+  // Load root directory and dependencies when repo changes
   useEffect(() => {
     if (currentRepo?.id) {
       setTreeCache({});
@@ -73,6 +103,11 @@ export const WorkspaceProvider = ({ children }) => {
       const initialBranch = currentRepo.defaultBranch || 'main';
       setCurrentBranch(initialBranch);
       fetchDirectory('', true, initialBranch);
+
+      setDependenciesData(null);
+      setDependenciesCount(null);
+      setDependenciesError(null);
+      fetchDependencies(initialBranch);
     }
   }, [currentRepo?.id]);
 
@@ -192,7 +227,77 @@ export const WorkspaceProvider = ({ children }) => {
     setCurrentBranch(newBranch);
     setTreeCache({});
     fetchDirectory('', true, newBranch);
+    fetchDependencies(newBranch);
   };
+
+  // Auto-discover active preview session for current repository
+  const syncActivePreview = useCallback(async () => {
+    if (!currentRepo?.id) return;
+    try {
+      const active = await previewService.getActivePreview();
+      if (active?.session?.isActive && active.session.repositoryId === currentRepo.id) {
+        setPreviewSession(active.session);
+        setPreviewState(active.session.status.toLowerCase());
+        setPreviewPort(active.session.proxyPort || null);
+      } else if (!active?.session?.isActive) {
+        setPreviewSession(null);
+        setPreviewState('idle');
+        setPreviewPort(null);
+      }
+    } catch {
+      // Non-critical background discovery
+    }
+  }, [currentRepo?.id]);
+
+  useEffect(() => {
+    syncActivePreview();
+  }, [syncActivePreview]);
+
+  // Centralized preview stop operation
+  const stopActivePreview = useCallback(async (sessionIdToStop = null) => {
+    setPreviewStopError(null);
+    let targetId = sessionIdToStop || previewSession?.id;
+
+    if (!targetId) {
+      try {
+        const active = await previewService.getActivePreview();
+        if (active?.session?.id) {
+          targetId = active.session.id;
+        }
+      } catch {
+        // Fallback
+      }
+    }
+
+    setStopTriggerTimestamp(Date.now());
+
+    if (!targetId) {
+      setPreviewState('stopped');
+      setPreviewPort(null);
+      setPreviewSession(null);
+      return { success: true };
+    }
+
+    setPreviewState('stopping');
+    try {
+      const stopped = await previewService.stopPreview(targetId);
+      setPreviewSession(stopped);
+      setPreviewState('stopped');
+      setPreviewPort(null);
+      return { success: true, session: stopped };
+    } catch (err) {
+      if (err.status === 404 || err.code === 'SESSION_NOT_FOUND') {
+        setPreviewSession(null);
+        setPreviewState('stopped');
+        setPreviewPort(null);
+        return { success: true };
+      }
+      setPreviewState('failed');
+      const msg = err.message || 'Failed to stop preview session.';
+      setPreviewStopError(msg);
+      throw err;
+    }
+  }, [previewSession?.id]);
 
   const triggerSandboxRefresh = () => {
     setPreviewState('loading');
@@ -242,12 +347,24 @@ export const WorkspaceProvider = ({ children }) => {
         loadingReadme,
         readmeError,
         loadReadme,
+        dependenciesData,
+        dependenciesCount,
+        loadingDependencies,
+        dependenciesError,
+        fetchDependencies,
         mainViewMode,
         setMainViewMode,
         previewState,
         setPreviewState: updatePreviewState,
         previewPort,
         setPreviewPort: updatePreviewPort,
+        previewSession,
+        setPreviewSession,
+        previewStopError,
+        setPreviewStopError,
+        stopActivePreview,
+        syncActivePreview,
+        stopTriggerTimestamp,
         previewDevice,
         setPreviewDevice,
         isPreviewOpen,

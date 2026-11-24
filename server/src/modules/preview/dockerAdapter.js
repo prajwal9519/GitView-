@@ -1342,6 +1342,25 @@ export class DockerAdapter {
           report.errors.push(`Failed to remove container ${cId}: ${err.message}`);
         }
       }
+
+      // Supplementary targeted name cleanup for standard containers
+      const standardContainers = [
+        `gitview-runner-${sessionId}`,
+        `gitview-proxy-${sessionId}`,
+        `gitview-builder-${sessionId}`,
+        `gitview-build-proxy-${sessionId}`,
+        `gitview-extractor-${sessionId}`,
+      ];
+      for (const cName of standardContainers) {
+        try {
+          const res = await this.#execute(['rm', '-f', cName]);
+          if (res.stdout.trim() && !report.containersRemoved.includes(cName)) {
+            report.containersRemoved.push(cName);
+          }
+        } catch {
+          // Ignored if already removed
+        }
+      }
     } catch (err) {
       report.errors.push(`Failed to enumerate containers: ${err.message}`);
     }
@@ -1360,6 +1379,24 @@ export class DockerAdapter {
           report.networksRemoved.push(nId);
         } catch (err) {
           report.errors.push(`Failed to remove network ${nId}: ${err.message}`);
+        }
+      }
+
+      // Supplementary targeted name cleanup for standard networks
+      const standardNetworks = [
+        `gitview-net-${sessionId}`,
+        `gitview-ingress-net-${sessionId}`,
+        `gitview-build-int-${sessionId}`,
+        `gitview-build-egress-${sessionId}`,
+      ];
+      for (const nName of standardNetworks) {
+        try {
+          const res = await this.#execute(['network', 'rm', nName]);
+          if (res.stdout.trim() && !report.networksRemoved.includes(nName)) {
+            report.networksRemoved.push(nName);
+          }
+        } catch {
+          // Ignored if already removed
         }
       }
     } catch (err) {
@@ -1381,6 +1418,17 @@ export class DockerAdapter {
         } catch (err) {
           report.errors.push(`Failed to remove volume ${vId}: ${err.message}`);
         }
+      }
+
+      // Supplementary targeted volume cleanup
+      const standardVol = `gitview-ws-${sessionId}`;
+      try {
+        const res = await this.#execute(['volume', 'rm', standardVol]);
+        if (res.stdout.trim() && !report.volumesRemoved.includes(standardVol)) {
+          report.volumesRemoved.push(standardVol);
+        }
+      } catch {
+        // Ignored if already removed
       }
     } catch (err) {
       report.errors.push(`Failed to enumerate volumes: ${err.message}`);

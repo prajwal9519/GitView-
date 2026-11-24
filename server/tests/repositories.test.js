@@ -624,4 +624,284 @@ describe('Phase 3: GitHub Repository Management', () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe('GET /api/v1/repositories/:id/dependencies', () => {
+    it('returns hasManifest: false and totalCount: 0 for static repository without package.json', async () => {
+      const { res: regRes, accessToken } = await registerAndGetTokens();
+      const userId = regRes.body.data.user.id;
+
+      const repo = await prisma.repository.create({
+        data: {
+          userId,
+          githubRepoId: '99887766',
+          owner: 'testowner',
+          name: 'static-site',
+          fullName: 'testowner/static-site',
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/testowner/static-site',
+        },
+      });
+
+      // Mock GitHub contents: root contains index.html and style.css (no package.json)
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/contents/package.json')) {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (urlStr.includes('/contents')) {
+          return new Response(
+            JSON.stringify([
+              { name: 'index.html', path: 'index.html', type: 'file', size: 500, sha: '111' },
+              { name: 'style.css', path: 'style.css', type: 'file', size: 300, sha: '222' },
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const res = await api()
+        .get(`/api/v1/repositories/${repo.id}/dependencies`)
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toBeDefined();
+      expect(res.body.data.hasManifest).toBe(false);
+      expect(res.body.data.manifestPath).toBeNull();
+      expect(res.body.data.totalCount).toBe(0);
+      expect(res.body.data.dependencies).toEqual([]);
+      expect(res.body.data.message).toContain('No package.json manifest found');
+    });
+
+    it('returns parsed dependencies and package metadata for repository with valid package.json', async () => {
+      const { res: regRes, accessToken } = await registerAndGetTokens();
+      const userId = regRes.body.data.user.id;
+
+      const repo = await prisma.repository.create({
+        data: {
+          userId,
+          githubRepoId: '99887767',
+          owner: 'testowner',
+          name: 'vite-app',
+          fullName: 'testowner/vite-app',
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/testowner/vite-app',
+        },
+      });
+
+      const mockPkgJson = {
+        name: 'my-vite-app',
+        version: '1.2.0',
+        license: 'MIT',
+        dependencies: {
+          react: '^18.2.0',
+          'react-dom': '^18.2.0',
+        },
+        devDependencies: {
+          vite: '^5.0.0',
+          '@vitejs/plugin-react': '^4.2.0',
+        },
+      };
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/contents/package.json')) {
+          return new Response(
+            JSON.stringify({
+              name: 'package.json',
+              path: 'package.json',
+              type: 'file',
+              encoding: 'base64',
+              content: Buffer.from(JSON.stringify(mockPkgJson)).toString('base64'),
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (urlStr.includes('/contents')) {
+          return new Response(
+            JSON.stringify([
+              { name: 'index.html', path: 'index.html', type: 'file', size: 500, sha: '111' },
+              { name: 'package.json', path: 'package.json', type: 'file', size: 300, sha: '222' },
+              { name: 'package-lock.json', path: 'package-lock.json', type: 'file', size: 1000, sha: '333' },
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const res = await api()
+        .get(`/api/v1/repositories/${repo.id}/dependencies`)
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.hasManifest).toBe(true);
+      expect(res.body.data.manifestPath).toBe('package.json');
+      expect(res.body.data.totalCount).toBe(4);
+      expect(res.body.data.dependencies).toHaveLength(2);
+      expect(res.body.data.devDependencies).toHaveLength(2);
+      expect(res.body.data.packageMetadata.name).toBe('my-vite-app');
+      expect(res.body.data.packageMetadata.version).toBe('1.2.0');
+    });
+
+    it('resolves nested project root and parses nested package.json', async () => {
+      const { res: regRes, accessToken } = await registerAndGetTokens();
+      const userId = regRes.body.data.user.id;
+
+      const repo = await prisma.repository.create({
+        data: {
+          userId,
+          githubRepoId: '99887768',
+          owner: 'testowner',
+          name: 'nested-app',
+          fullName: 'testowner/nested-app',
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/testowner/nested-app',
+        },
+      });
+
+      const mockNestedPkgJson = {
+        name: 'nested-vite',
+        version: '0.1.0',
+        dependencies: {
+          lucide: '^0.3.0',
+        },
+        devDependencies: {
+          vite: '^5.0.0',
+        },
+      };
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/contents/vite-project/package.json')) {
+          return new Response(
+            JSON.stringify({
+              name: 'package.json',
+              path: 'vite-project/package.json',
+              type: 'file',
+              encoding: 'base64',
+              content: Buffer.from(JSON.stringify(mockNestedPkgJson)).toString('base64'),
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (urlStr.includes('/contents/vite-project')) {
+          return new Response(
+            JSON.stringify([
+              { name: 'index.html', path: 'vite-project/index.html', type: 'file', size: 500, sha: '111' },
+              { name: 'package.json', path: 'vite-project/package.json', type: 'file', size: 300, sha: '222' },
+              { name: 'package-lock.json', path: 'vite-project/package-lock.json', type: 'file', size: 1000, sha: '333' },
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (urlStr.includes('/contents')) {
+          return new Response(
+            JSON.stringify([
+              { name: 'README.md', path: 'README.md', type: 'file', size: 100, sha: '000' },
+              { name: 'vite-project', path: 'vite-project', type: 'dir', size: 0, sha: 'dir1' },
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const res = await api()
+        .get(`/api/v1/repositories/${repo.id}/dependencies`)
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.hasManifest).toBe(true);
+      expect(res.body.data.projectRoot).toBe('vite-project');
+      expect(res.body.data.manifestPath).toBe('vite-project/package.json');
+      expect(res.body.data.totalCount).toBe(2);
+      expect(res.body.data.dependencies).toHaveLength(1);
+      expect(res.body.data.devDependencies).toHaveLength(1);
+      expect(res.body.data.dependencies[0].name).toBe('lucide');
+    });
+
+    it('returns 422 MALFORMED_MANIFEST when package.json contains invalid JSON syntax', async () => {
+      const { res: regRes, accessToken } = await registerAndGetTokens();
+      const userId = regRes.body.data.user.id;
+
+      const repo = await prisma.repository.create({
+        data: {
+          userId,
+          githubRepoId: '99887769',
+          owner: 'testowner',
+          name: 'broken-json-app',
+          fullName: 'testowner/broken-json-app',
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/testowner/broken-json-app',
+        },
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/contents/package.json')) {
+          return new Response(
+            JSON.stringify({
+              name: 'package.json',
+              path: 'package.json',
+              type: 'file',
+              encoding: 'base64',
+              content: Buffer.from('{ "name": "broken", invalid_json }').toString('base64'),
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (urlStr.includes('/contents')) {
+          return new Response(
+            JSON.stringify([
+              { name: 'package.json', path: 'package.json', type: 'file', size: 50, sha: '111' },
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const res = await api()
+        .get(`/api/v1/repositories/${repo.id}/dependencies`)
+        .set('Cookie', cookieHeader({ access_token: accessToken }));
+
+      expect(res.status).toBe(422);
+      expect(res.body.error?.code).toBe('MALFORMED_MANIFEST');
+      expect(res.body.error?.message).toContain('Failed to parse package.json');
+    });
+
+    it('enforces ownership protection (returns 404 when requested by another user)', async () => {
+      const { res: aliceReg } = await registerAndGetTokens({
+        email: 'alice_dep@example.com',
+        username: 'alice_dep',
+        password: 'password123',
+      });
+
+      const { accessToken: bobToken } = await registerAndGetTokens({
+        email: 'bob_dep@example.com',
+        username: 'bob_dep',
+        password: 'password123',
+      });
+
+      const aliceRepo = await prisma.repository.create({
+        data: {
+          userId: aliceReg.body.data.user.id,
+          githubRepoId: '88776655',
+          owner: 'alice-corp',
+          name: 'secret-lib',
+          fullName: 'alice-corp/secret-lib',
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/alice-corp/secret-lib',
+        },
+      });
+
+      const res = await api()
+        .get(`/api/v1/repositories/${aliceRepo.id}/dependencies`)
+        .set('Cookie', cookieHeader({ access_token: bobToken }));
+
+      expect(res.status).toBe(404);
+      expect(res.body.error?.code).toBe('NOT_FOUND');
+    });
+  });
 });

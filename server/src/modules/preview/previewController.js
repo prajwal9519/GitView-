@@ -31,6 +31,17 @@ export async function createPreview(req, res, next) {
   }
 }
 
+export async function getActivePreview(req, res, next) {
+  try {
+    const active = await previewManager.getActivePreviewForUser(req.user.id);
+    res.status(200).json({
+      data: active,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function getPreviewStatus(req, res, next) {
   try {
     const session = await previewManager.getPreviewSessionStatus(req.params.id, req.user.id);

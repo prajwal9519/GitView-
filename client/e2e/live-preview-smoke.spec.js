@@ -137,9 +137,9 @@ test.describe.serial('GitView Phase 5: Live Frontend-to-Backend Docker Acceptanc
     await page.waitForLoadState('networkidle');
 
     // Open Preview panel via toolbar if not already visible
-    const previewBadge = page.locator('text=Preview: Launch');
-    if (await previewBadge.isVisible()) {
-      await previewBadge.click();
+    const previewTrigger = page.locator('[title="Toggle Live Preview Panel"]');
+    if (await previewTrigger.isVisible()) {
+      await previewTrigger.click();
     }
 
     const runBtn = page.locator('[data-testid="preview-run-btn"]');
@@ -251,9 +251,9 @@ test.describe.serial('GitView Phase 5: Live Frontend-to-Backend Docker Acceptanc
     await page.waitForLoadState('networkidle');
 
     // Open Preview panel via toolbar if not already visible
-    const previewBadge = page.locator('text=Preview: Launch');
-    if (await previewBadge.isVisible()) {
-      await previewBadge.click();
+    const previewTrigger = page.locator('[title="Toggle Live Preview Panel"]');
+    if (await previewTrigger.isVisible()) {
+      await previewTrigger.click();
     }
 
     const runBtn = page.locator('[data-testid="preview-run-btn"]');
@@ -316,9 +316,9 @@ test.describe.serial('GitView Phase 5: Live Frontend-to-Backend Docker Acceptanc
     await page.waitForLoadState('networkidle');
 
     // Open Preview panel via toolbar if not already visible
-    const previewBadge = page.locator('text=Preview: Launch');
-    if (await previewBadge.isVisible()) {
-      await previewBadge.click();
+    const previewTrigger = page.locator('[title="Toggle Live Preview Panel"]');
+    if (await previewTrigger.isVisible()) {
+      await previewTrigger.click();
     }
 
     const runBtn = page.locator('[data-testid="preview-run-btn"]');

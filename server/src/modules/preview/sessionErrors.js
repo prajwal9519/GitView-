@@ -5,7 +5,7 @@
 import { AppError } from '../../utils/AppError.js';
 
 export class ActiveSessionConflictError extends AppError {
-  constructor(userId, message) {
+  constructor(userId, message, details = null) {
     super(
       409,
       'ACTIVE_SESSION_CONFLICT',
@@ -13,6 +13,7 @@ export class ActiveSessionConflictError extends AppError {
     );
     this.name = 'ActiveSessionConflictError';
     this.userId = userId;
+    this.details = details;
   }
 }
 

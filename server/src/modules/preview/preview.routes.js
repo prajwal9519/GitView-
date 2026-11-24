@@ -37,6 +37,13 @@ router.post(
   previewController.createPreview
 );
 
+// GET /api/v1/previews/active - Retrieves active preview session for user
+router.get(
+  '/active',
+  previewStatusLimiter,
+  previewController.getActivePreview
+);
+
 // GET /api/v1/previews/:id - Polls session lifecycle state
 router.get(
   '/:id',

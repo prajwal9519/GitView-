@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   previewService,
   PreviewStatus,
@@ -27,6 +28,7 @@ export const LivePreview = ({
   onClose,
   initialSession = null,
   onStatusChange = null,
+  stopTriggerTimestamp = null,
 }) => {
   // Session lifecycle state
   const [session, setSession] = useState(initialSession);
@@ -42,12 +44,31 @@ export const LivePreview = ({
   }, [onStatusChange]);
 
   useEffect(() => {
-    onStatusChangeRef.current?.({ status, port: session?.proxyPort || null });
-  }, [status, session?.proxyPort]);
+    onStatusChangeRef.current?.({ status, port: session?.proxyPort || null, session });
+  }, [status, session?.proxyPort, session]);
+
+  // Synchronize when preview is stopped externally (e.g. from WorkspaceToolbar)
+  const initialTriggerRef = useRef(stopTriggerTimestamp);
+  useEffect(() => {
+    if (stopTriggerTimestamp && stopTriggerTimestamp !== initialTriggerRef.current) {
+      initialTriggerRef.current = stopTriggerTimestamp;
+      if (
+        status === PreviewStatus.RUNNING ||
+        status === PreviewStatus.STARTING ||
+        status === PreviewStatus.BUILDING ||
+        status === PreviewStatus.FETCHING ||
+        status === PreviewStatus.PENDING
+      ) {
+        handleStop();
+      }
+    }
+  }, [stopTriggerTimestamp, status]);
 
   // Error & conflict state
   const [errorInfo, setErrorInfo] = useState(null);
   const [conflictSessionId, setConflictSessionId] = useState(null);
+  const [conflictDetails, setConflictDetails] = useState(null);
+  const [successNotification, setSuccessNotification] = useState('');
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [detectedFramework, setDetectedFramework] = useState(null);
 
@@ -205,6 +226,52 @@ export const LivePreview = ({
     [loadIframeWithTicket]
   );
 
+  // Automatically discover and reattach to active preview on mount / refresh
+  useEffect(() => {
+    let mounted = true;
+    if (!initialSession && repositoryId) {
+      previewService
+        .getActivePreview()
+        .then((data) => {
+          if (!mounted || !data) return;
+          const { session: activeSess, repository: activeRepo } = data;
+          if (activeSess && activeSess.isActive) {
+            if (activeSess.repositoryId === repositoryId) {
+              setSession(activeSess);
+              setStatus(activeSess.status);
+              if (activeSess.status === PreviewStatus.RUNNING) {
+                loadIframeWithTicket(activeSess.id);
+              } else if (
+                [
+                  PreviewStatus.PENDING,
+                  PreviewStatus.FETCHING,
+                  PreviewStatus.BUILDING,
+                  PreviewStatus.STARTING,
+                ].includes(activeSess.status)
+              ) {
+                startPolling(activeSess.id);
+              }
+            } else {
+              setConflictDetails({
+                activeSessionId: activeSess.id,
+                repositoryId: activeSess.repositoryId,
+                repositoryName: activeRepo?.name || activeRepo?.fullName || 'Active Repository',
+                repositoryOwner: activeRepo?.owner || null,
+                status: activeSess.status,
+                startedAt: activeSess.startedAt,
+                expiresAt: activeSess.expiresAt,
+              });
+              setConflictSessionId(activeSess.id);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [repositoryId, initialSession, loadIframeWithTicket, startPolling]);
+
   /**
    * Action: Start / Run Preview
    */
@@ -221,6 +288,8 @@ export const LivePreview = ({
     setIsActionInProgress(true);
     setErrorInfo(null);
     setConflictSessionId(null);
+    setConflictDetails(null);
+    setSuccessNotification('');
     setStatus(PreviewStatus.STARTING);
     setIframeUrl('');
 
@@ -243,12 +312,14 @@ export const LivePreview = ({
       }
     } catch (err) {
       if (err.status === 409 || err.code === 'ACTIVE_SESSION_CONFLICT') {
-        const activeId = err.details?.activeSessionId;
-        setConflictSessionId(activeId || 'active');
+        const details = err.details || {};
+        const activeId = details.activeSessionId || conflictSessionId || 'active';
+        setConflictSessionId(activeId);
+        setConflictDetails(details);
         setStatus('CONFLICT');
         setErrorInfo({
           code: 'ACTIVE_SESSION_CONFLICT',
-          message: 'You already have an active live preview session running.',
+          message: err.message || 'You already have an active live preview session running.',
         });
       } else {
         setStatus(PreviewStatus.FAILED);
@@ -266,7 +337,7 @@ export const LivePreview = ({
    * Action: Stop active preview
    */
   const handleStop = async (sessionIdToStop = null) => {
-    const targetId = sessionIdToStop || session?.id || conflictSessionId;
+    const targetId = sessionIdToStop || session?.id || conflictSessionId || conflictDetails?.activeSessionId;
     if (!targetId || targetId === 'active') {
       setStatus(PreviewStatus.STOPPED);
       setSession(null);
@@ -279,13 +350,17 @@ export const LivePreview = ({
     }
 
     setIsActionInProgress(true);
+    setStatus(PreviewStatus.STOPPING);
     try {
       const stoppedSession = await previewService.stopPreview(targetId);
       setSession(stoppedSession);
       setStatus(PreviewStatus.STOPPED);
       setIframeUrl('');
       setConflictSessionId(null);
+      setConflictDetails(null);
       setErrorInfo(null);
+      setSuccessNotification('Preview stopped. All Docker resources successfully released.');
+      setTimeout(() => setSuccessNotification(''), 4500);
     } catch (err) {
       // If the session was already gone or not found (404), transition cleanly to STOPPED
       if (err.status === 404 || err.code === 'SESSION_NOT_FOUND') {
@@ -293,9 +368,13 @@ export const LivePreview = ({
         setSession(null);
         setIframeUrl('');
         setConflictSessionId(null);
+        setConflictDetails(null);
         setErrorInfo(null);
+        setSuccessNotification('Preview stopped and resources cleaned up.');
+        setTimeout(() => setSuccessNotification(''), 4500);
       } else {
         console.error('Stop preview error:', err.message);
+        setStatus(PreviewStatus.FAILED);
         setErrorInfo({
           code: err.code || 'STOP_FAILED',
           message: err.message || 'Failed to stop preview session.',
@@ -310,14 +389,18 @@ export const LivePreview = ({
    * Action: Resolve conflict by stopping previous session and immediately launching new preview
    */
   const handleTerminateAndRestart = async () => {
-    if (conflictSessionId && conflictSessionId !== 'active') {
+    const targetId = conflictSessionId || conflictDetails?.activeSessionId;
+    if (targetId && targetId !== 'active') {
+      setStatus(PreviewStatus.STOPPING);
+      setIsActionInProgress(true);
       try {
-        await previewService.stopPreview(conflictSessionId);
+        await previewService.stopPreview(targetId);
       } catch (err) {
         console.warn('Could not stop conflict session:', err.message);
       }
     }
     setConflictSessionId(null);
+    setConflictDetails(null);
     setErrorInfo(null);
     await handleStart();
   };
@@ -464,11 +547,31 @@ export const LivePreview = ({
                 </div>
               )}
 
+              {/* Stop Preview Button (prominent beside Refresh) */}
+              <button
+                onClick={() => handleStop()}
+                disabled={isActionInProgress || status === PreviewStatus.STOPPING}
+                className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono font-medium bg-red-950/80 hover:bg-red-900/80 text-red-200 border border-red-500/50 hover:border-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shrink-0"
+                title={status === PreviewStatus.STOPPING ? 'Stopping Preview...' : 'Stop Preview & Release Docker Resources'}
+                data-testid="preview-stop-btn"
+              >
+                <span
+                  className={`material-symbols-outlined text-[14px] ${
+                    status === PreviewStatus.STOPPING ? 'animate-spin' : 'text-red-400'
+                  }`}
+                >
+                  {status === PreviewStatus.STOPPING ? 'progress_activity' : 'stop'}
+                </span>
+                <span className="hidden sm:inline">
+                  {status === PreviewStatus.STOPPING ? 'Stopping...' : 'Stop'}
+                </span>
+              </button>
+
               {/* Refresh Frame */}
               <button
                 onClick={handleRefresh}
                 disabled={isActionInProgress}
-                className="hover:text-white p-1 rounded hover:bg-slate-800 transition-colors disabled:opacity-50"
+                className="hover:text-white p-1 rounded hover:bg-slate-800 transition-colors disabled:opacity-50 shrink-0"
                 title="Reload Preview Frame"
                 data-testid="preview-refresh-btn"
               >
@@ -512,17 +615,6 @@ export const LivePreview = ({
               >
                 <span className="material-symbols-outlined text-[15px]">open_in_new</span>
               </button>
-
-              {/* Stop Preview */}
-              <button
-                onClick={() => handleStop()}
-                disabled={isActionInProgress}
-                className="hover:text-red-400 p-1 rounded hover:bg-slate-800 transition-colors disabled:opacity-50"
-                title="Stop Preview Environment"
-                data-testid="preview-stop-btn"
-              >
-                <span className="material-symbols-outlined text-[15px]">stop_circle</span>
-              </button>
             </>
           )}
 
@@ -541,6 +633,22 @@ export const LivePreview = ({
 
       {/* Preview Main Body Container */}
       <div className="flex-1 bg-[#05070D] flex flex-col relative overflow-hidden">
+        {/* Success Notification Banner */}
+        {successNotification && (
+          <div className="px-4 py-2 bg-emerald-950/80 border-b border-emerald-500/30 text-emerald-300 text-xs font-mono flex items-center justify-between z-20 shrink-0">
+            <div className="flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-emerald-400">check_circle</span>
+              <span>{successNotification}</span>
+            </div>
+            <button
+              onClick={() => setSuccessNotification('')}
+              className="hover:text-white text-emerald-400"
+            >
+              <span className="material-symbols-outlined text-[14px]">close</span>
+            </button>
+          </div>
+        )}
+
         {/* ========================================================
             STATE 1: IDLE — Ready to Run
             ======================================================== */}
@@ -597,6 +705,35 @@ export const LivePreview = ({
             {detectedFramework?.projectRoot && (
               <div className="mt-2 text-[11px] font-mono text-slate-400">
                 Detected App Root: <span className="text-blue-300 bg-slate-900 px-1.5 py-0.5 rounded border border-border-subtle">{detectedFramework.projectRoot}</span>
+              </div>
+            )}
+
+            {/* Hint if active preview is running on another repo */}
+            {conflictDetails && (
+              <div className="mt-4 p-3 rounded-lg bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs font-mono max-w-sm text-left">
+                <div className="flex items-center gap-1.5 font-semibold text-amber-400">
+                  <span className="material-symbols-outlined text-[16px]">info</span>
+                  <span>Active Preview on Another Repository</span>
+                </div>
+                <p className="mt-1 text-[11px] text-amber-200/80">
+                  Preview is running for <span className="text-white font-semibold">{conflictDetails.repositoryName}</span>. Running here will stop it and launch this repository.
+                </p>
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    onClick={handleTerminateAndRestart}
+                    disabled={isActionInProgress}
+                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-[11px] font-semibold transition-colors flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[13px]">swap_horiz</span>
+                    <span>Stop & Run Here</span>
+                  </button>
+                  <Link
+                    to={`/workspace/${conflictDetails.repositoryId}`}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] transition-colors"
+                  >
+                    View Active
+                  </Link>
+                </div>
               </div>
             )}
 
@@ -775,6 +912,26 @@ export const LivePreview = ({
         )}
 
         {/* ========================================================
+            STATE: STOPPING
+            ======================================================== */}
+        {status === PreviewStatus.STOPPING && (
+          <div
+            className="flex-1 flex flex-col items-center justify-center p-6 text-center"
+            data-testid="preview-stopping-state"
+          >
+            <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mb-4">
+              <div className="w-6 h-6 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
+            </div>
+            <h3 className="font-headline text-base font-semibold text-white">
+              Stopping Preview Environment...
+            </h3>
+            <p className="text-xs text-slate-400 mt-1.5 max-w-xs">
+              Releasing Docker runner container, proxy sidecar, networks, and Redis leases...
+            </p>
+          </div>
+        )}
+
+        {/* ========================================================
             STATE 4: STOPPED
             ======================================================== */}
         {status === PreviewStatus.STOPPED && (
@@ -910,8 +1067,15 @@ export const LivePreview = ({
               Active Preview Exists
             </h3>
             <p className="text-xs text-slate-300 mt-1 max-w-xs">
-              Each user is limited to 1 active preview session at a time. A preview is currently
-              running in another workspace or tab.
+              {conflictDetails?.repositoryName ? (
+                <>
+                  An active preview is currently running for{' '}
+                  <span className="text-white font-semibold">{conflictDetails.repositoryName}</span>.
+                  Each user is limited to 1 active preview session at a time.
+                </>
+              ) : (
+                'Each user is limited to 1 active preview session at a time. A preview is currently running in another workspace or tab.'
+              )}
             </p>
             <div className="mt-5 flex flex-col sm:flex-row items-center gap-2">
               <button
@@ -921,8 +1085,16 @@ export const LivePreview = ({
                 data-testid="preview-terminate-restart-btn"
               >
                 <span className="material-symbols-outlined text-[15px]">swap_horiz</span>
-                <span>Switch to This Preview</span>
+                <span>Stop & Launch Here</span>
               </button>
+              {conflictDetails?.repositoryId && (
+                <Link
+                  to={`/workspace/${conflictDetails.repositoryId}`}
+                  className="w-full sm:w-auto px-3.5 py-2 rounded bg-dark-surface-container hover:bg-slate-800 border border-border-subtle text-slate-300 hover:text-white text-xs font-mono transition-colors"
+                >
+                  Go to Active Repo
+                </Link>
+              )}
               <button
                 onClick={() => setStatus('IDLE')}
                 className="w-full sm:w-auto px-3.5 py-2 rounded bg-dark-surface-container hover:bg-slate-800 border border-border-subtle text-slate-300 text-xs font-mono transition-colors"

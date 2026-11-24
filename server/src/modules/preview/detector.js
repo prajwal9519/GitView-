@@ -182,6 +182,7 @@ export function detectFramework({
       variant: 'STATIC_HTML',
       entryPoint: 'index.html',
       projectRoot: cleanProjectRoot,
+      hasPackageJson: false,
     };
   }
 
@@ -381,6 +382,7 @@ export function detectFramework({
       variant: 'STATIC_HTML',
       entryPoint: 'index.html',
       projectRoot: cleanProjectRoot,
+      hasPackageJson: true,
     };
   }
 
@@ -419,6 +421,7 @@ export function detectFramework({
     entryPoint: 'index.html',
     packageManager: 'NPM',
     projectRoot: cleanProjectRoot,
+    hasPackageJson: true,
   };
 }
 

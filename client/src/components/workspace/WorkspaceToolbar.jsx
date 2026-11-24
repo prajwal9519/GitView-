@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { Modal } from '../common/Modal';
+import { previewService } from '../../services/previewService';
 
 export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
+  const navigate = useNavigate();
   const {
     currentRepo,
     currentBranch,
@@ -17,10 +20,53 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
     fetchDirectory,
     loadFile,
     activeTab,
+    dependenciesCount,
+    loadingDependencies,
+    stopActivePreview,
+    previewStopError,
   } = useWorkspace();
 
   const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const [isStoppingPreview, setIsStoppingPreview] = useState(false);
+  const [toolbarStopError, setToolbarStopError] = useState(null);
+
+  const handleLogoClick = () => {
+    if (previewState === 'running') {
+      setIsLeaveModalOpen(true);
+    } else {
+      navigate('/dashboard');
+    }
+  };
+
+  const handleToolbarStop = async () => {
+    if (isStoppingPreview || (previewState || '').toLowerCase() === 'stopping') return;
+    setIsStoppingPreview(true);
+    setToolbarStopError(null);
+    try {
+      await stopActivePreview();
+    } catch (err) {
+      console.error('Failed to stop preview from toolbar:', err.message);
+      setToolbarStopError(err.message || 'Failed to stop preview.');
+      setTimeout(() => setToolbarStopError(null), 5000);
+    } finally {
+      setIsStoppingPreview(false);
+    }
+  };
+
+  const handleStopAndLeave = async () => {
+    setIsStoppingPreview(true);
+    try {
+      await stopActivePreview();
+    } catch {
+      // Continue navigation
+    } finally {
+      setIsStoppingPreview(false);
+      setIsLeaveModalOpen(false);
+      navigate('/dashboard');
+    }
+  };
 
   const handleRefreshClick = () => {
     setIsRefreshing(true);
@@ -78,19 +124,28 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
 
   const status = getStatusPillClasses();
 
+  const isPreviewActiveOrBooting = [
+    'running',
+    'starting',
+    'pending',
+    'fetching',
+    'building',
+    'stopping',
+  ].includes((previewState || '').toLowerCase());
+
   return (
     <header className="h-14 bg-[#0A0E18] border-b border-border-subtle px-4 flex items-center justify-between shrink-0 z-30 select-none">
       {/* Left: Logo, Repository ID, Branch Picker */}
       <div className="flex items-center gap-3">
-        <Link
-          to="/dashboard"
+        <button
+          onClick={handleLogoClick}
           className="flex items-center gap-2 hover:opacity-85 transition-opacity"
           title="Back to Dashboard"
         >
           <div className="w-7 h-7 rounded bg-gradient-to-tr from-dark-primary to-accent flex items-center justify-center text-white font-mono font-bold text-xs shadow-sm">
             GV
           </div>
-        </Link>
+        </button>
 
         <div className="h-4 w-px bg-border-strong"></div>
 
@@ -196,11 +251,19 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
               ? 'bg-dark-surface-container text-white font-medium border border-border-subtle shadow-sm'
               : 'text-slate-400 hover:text-white'
           }`}
+          title="View Dependencies"
         >
           <span className="material-symbols-outlined text-[15px]">package_2</span>
           <span>Dependencies</span>
-          <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-slate-800 text-slate-400">
-            {currentRepo.dependenciesCount || 18}
+          <span
+            data-testid="dependencies-count-badge"
+            className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-slate-800 text-slate-400"
+          >
+            {loadingDependencies
+              ? '...'
+              : dependenciesCount !== null && dependenciesCount !== undefined
+              ? dependenciesCount
+              : '—'}
           </span>
         </button>
 
@@ -228,11 +291,56 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
         <div
           onClick={() => setIsPreviewOpen(!isPreviewOpen)}
           title="Toggle Live Preview Panel"
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border cursor-pointer hover:opacity-90 transition-colors ${status.bg}`}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border cursor-pointer hover:opacity-90 transition-colors shrink-0 ${status.bg}`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
           <span>{status.text}</span>
         </div>
+
+        {/* Always-Visible Stop Preview Button */}
+        {isPreviewActiveOrBooting && (
+          <button
+            onClick={handleToolbarStop}
+            disabled={isStoppingPreview || (previewState || '').toLowerCase() === 'stopping'}
+            data-testid="toolbar-stop-preview-btn"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium transition-colors border shadow-sm shrink-0 bg-red-950/80 hover:bg-red-900/80 text-red-200 border-red-500/50 hover:border-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Stop Running Preview and Release Docker Resources"
+          >
+            <span
+              className={`material-symbols-outlined text-[15px] ${
+                isStoppingPreview || (previewState || '').toLowerCase() === 'stopping'
+                  ? 'animate-spin'
+                  : 'text-red-400'
+              }`}
+            >
+              {isStoppingPreview || (previewState || '').toLowerCase() === 'stopping'
+                ? 'progress_activity'
+                : 'stop'}
+            </span>
+            <span className="hidden sm:inline">
+              {isStoppingPreview || (previewState || '').toLowerCase() === 'stopping'
+                ? 'Stopping...'
+                : 'Stop Preview'}
+            </span>
+            <span className="sm:hidden">
+              {isStoppingPreview || (previewState || '').toLowerCase() === 'stopping'
+                ? 'Stop...'
+                : 'Stop'}
+            </span>
+          </button>
+        )}
+
+        {/* Toolbar Stop Error Message */}
+        {(toolbarStopError || previewStopError) && (
+          <div
+            data-testid="toolbar-stop-error"
+            className="hidden lg:flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-red-950/90 border border-red-500 text-red-300"
+            title={toolbarStopError || previewStopError}
+          >
+            <span className="material-symbols-outlined text-[13px]">error</span>
+            <span className="truncate max-w-[140px]">{toolbarStopError || previewStopError}</span>
+          </div>
+        )}
 
         {/* Hot Reload Sandbox Button */}
         <button
@@ -268,6 +376,50 @@ export const WorkspaceToolbar = ({ onOpenCommandPalette }) => {
           <span className="material-symbols-outlined text-[16px]">settings</span>
         </Link>
       </div>
+
+      {/* Confirmation Modal when Leaving Workspace with Active Preview */}
+      <Modal isOpen={isLeaveModalOpen} onClose={() => setIsLeaveModalOpen(false)} maxWidth="max-w-md">
+        <div className="p-5">
+          <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mb-3">
+            <span className="material-symbols-outlined text-[22px]">warning</span>
+          </div>
+          <h3 className="font-headline text-base font-bold text-white">
+            Active Preview Running
+          </h3>
+          <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+            A live container preview is currently active for{' '}
+            <span className="text-white font-semibold">{currentRepo?.name || 'this repository'}</span>.
+            Navigating away will keep it running in the background until the 15-minute idle timeout.
+          </p>
+          <div className="mt-5 flex flex-col gap-2">
+            <button
+              onClick={handleStopAndLeave}
+              disabled={isStoppingPreview}
+              className="w-full px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-medium text-xs font-mono rounded-lg transition-colors flex items-center justify-center gap-2 shadow"
+            >
+              <span className="material-symbols-outlined text-[16px]">
+                {isStoppingPreview ? 'hourglass_top' : 'stop_circle'}
+              </span>
+              <span>{isStoppingPreview ? 'Stopping Preview...' : 'Stop Preview & Leave'}</span>
+            </button>
+            <button
+              onClick={() => {
+                setIsLeaveModalOpen(false);
+                navigate('/dashboard');
+              }}
+              className="w-full px-4 py-2 bg-dark-surface-container-high hover:bg-slate-700 text-slate-200 text-xs font-mono rounded-lg transition-colors"
+            >
+              Keep Running & Leave
+            </button>
+            <button
+              onClick={() => setIsLeaveModalOpen(false)}
+              className="w-full px-4 py-1.5 text-slate-400 hover:text-white text-xs font-mono transition-colors"
+            >
+              Stay in Workspace
+            </button>
+          </div>
+        </div>
+      </Modal>
     </header>
   );
 };

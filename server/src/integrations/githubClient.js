@@ -309,7 +309,18 @@ export async function fetchContents(githubToken, owner, repo, path = '', ref = n
     url += `?ref=${encodeURIComponent(ref)}`;
   }
 
-  const result = await githubFetch(url, { method: 'GET' }, githubToken);
+  let result;
+  try {
+    result = await githubFetch(url, { method: 'GET' }, githubToken);
+  } catch (err) {
+    if (err.statusCode === 404 || err.name === 'NotFoundError') {
+      const msg = cleanPath
+        ? `File or directory '${cleanPath}' not found on ref '${ref || 'HEAD'}'`
+        : 'Repository resource not found on GitHub';
+      throw new NotFoundError(msg);
+    }
+    throw err;
+  }
 
   if (shouldCache && result) {
     if (contentsCache.size > 1000) {

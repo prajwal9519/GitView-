@@ -24,11 +24,13 @@ export const PreviewFramework = {
 };
 
 export const PreviewStatus = {
+  IDLE: 'IDLE',
   PENDING: 'PENDING',
   FETCHING: 'FETCHING',
   BUILDING: 'BUILDING',
   STARTING: 'STARTING',
   RUNNING: 'RUNNING',
+  STOPPING: 'STOPPING',
   STOPPED: 'STOPPED',
   FAILED: 'FAILED',
   EXPIRED: 'EXPIRED',
@@ -42,6 +44,19 @@ export const TERMINAL_STATUSES = new Set([
 ]);
 
 export const previewService = {
+  /**
+   * Retrieves active preview session for authenticated user, if one exists.
+   *
+   * @returns {Promise<{ session: Object, repository: Object }|null>}
+   */
+  async getActivePreview() {
+    try {
+      const res = await api.get('/previews/active');
+      return res.data?.data || null;
+    } catch (err) {
+      throw formatApiError(err);
+    }
+  },
   /**
    * Starts a new preview session for a repository.
    *

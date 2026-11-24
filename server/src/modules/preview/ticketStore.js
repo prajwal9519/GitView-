@@ -63,6 +63,10 @@ export class ITicketStore {
     throw new Error('ITicketStore.clear() must be implemented');
   }
 
+  async invalidateSessionTickets(_sessionId) {
+    throw new Error('ITicketStore.invalidateSessionTickets() must be implemented');
+  }
+
   async close() {
     // Optional cleanup
   }
@@ -180,9 +184,30 @@ export class RedisTicketStore extends ITicketStore {
     const value = JSON.stringify(metadata);
     try {
       await this.redis.set(key, value, 'EX', ttlSeconds);
+      if (metadata?.sessionId) {
+        const sessionKey = `preview:session:tickets:${metadata.sessionId}`;
+        await this.redis.sadd(sessionKey, ticketHash);
+        await this.redis.expire(sessionKey, ttlSeconds * 2);
+      }
     } catch (err) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, 'REDIS_ERROR', `Failed to write bootstrap ticket to Redis: ${err.message}`);
+    }
+  }
+
+  async invalidateSessionTickets(sessionId) {
+    if (!sessionId) return;
+    try {
+      const sessionKey = `preview:session:tickets:${sessionId}`;
+      const ticketHashes = await this.redis.smembers(sessionKey);
+      if (ticketHashes && ticketHashes.length > 0) {
+        const ticketKeys = ticketHashes.map((h) => `preview:ticket:${h}`);
+        await this.redis.del(...ticketKeys, sessionKey);
+      } else {
+        await this.redis.del(sessionKey);
+      }
+    } catch {
+      // Non-fatal cleanup
     }
   }
 
@@ -246,6 +271,7 @@ export class MemoryTicketStore extends ITicketStore {
   constructor() {
     super();
     this.map = new Map();
+    this.sessionTickets = new Map();
   }
 
   async setTicket(ticket, metadata, ttlSeconds = 30) {
@@ -277,6 +303,27 @@ export class MemoryTicketStore extends ITicketStore {
       expiresAt,
       timer,
     });
+
+    if (metadata?.sessionId) {
+      if (!this.sessionTickets.has(metadata.sessionId)) {
+        this.sessionTickets.set(metadata.sessionId, new Set());
+      }
+      this.sessionTickets.get(metadata.sessionId).add(ticketHash);
+    }
+  }
+
+  async invalidateSessionTickets(sessionId) {
+    if (!sessionId) return;
+    const hashes = this.sessionTickets.get(sessionId);
+    if (hashes) {
+      for (const hash of hashes) {
+        const key = `preview:ticket:${hash}`;
+        const entry = this.map.get(key);
+        if (entry?.timer) clearTimeout(entry.timer);
+        this.map.delete(key);
+      }
+      this.sessionTickets.delete(sessionId);
+    }
   }
 
   async consumeTicket(ticket, expectedHost = null) {
@@ -340,6 +387,9 @@ export class MemoryTicketStore extends ITicketStore {
       if (entry.timer) clearTimeout(entry.timer);
     }
     this.map.clear();
+    if (this.sessionTickets) {
+      this.sessionTickets.clear();
+    }
   }
 
   async close() {
@@ -395,4 +445,21 @@ export function createTicketStore(options = {}) {
   }
 
   return new MemoryTicketStore();
+}
+
+/**
+ * Invalidates all bootstrap tickets associated with a preview session.
+ *
+ * @param {string} sessionId
+ */
+export async function invalidateSessionTickets(sessionId) {
+  if (!sessionId) return;
+  try {
+    const store = getTicketStore();
+    if (typeof store.invalidateSessionTickets === 'function') {
+      await store.invalidateSessionTickets(sessionId);
+    }
+  } catch {
+    // Non-fatal cleanup
+  }
 }
